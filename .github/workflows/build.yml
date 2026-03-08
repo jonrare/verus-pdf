@@ -1,0 +1,154 @@
+name: Build VerusPDF
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. 1.0.0)'
+        required: true
+        default: '0.1.0'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build
+        run: wails build -platform windows/amd64 -o VerusPDF.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: veruspdf-windows-x64
+          path: build/bin/VerusPDF.exe
+          retention-days: 30
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build amd64
+        run: wails build -platform darwin/amd64 -o VerusPDF-amd64
+
+      - name: Build arm64
+        run: wails build -platform darwin/arm64 -o VerusPDF-arm64
+
+      - name: Create universal binary + DMG
+        working-directory: build/bin
+        run: |
+          if [ -d "VerusPDF-amd64.app" ]; then
+            lipo -create -output VerusPDF \
+              VerusPDF-amd64.app/Contents/MacOS/VerusPDF-amd64 \
+              VerusPDF-arm64.app/Contents/MacOS/VerusPDF-arm64
+            cp -R VerusPDF-amd64.app VerusPDF.app
+            cp VerusPDF VerusPDF.app/Contents/MacOS/VerusPDF
+            /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable VerusPDF" VerusPDF.app/Contents/Info.plist
+            hdiutil create -volname "VerusPDF" -srcfolder VerusPDF.app -ov -format UDZO VerusPDF.dmg
+          else
+            lipo -create -output VerusPDF VerusPDF-amd64 VerusPDF-arm64
+            mkdir -p dmg-staging && cp VerusPDF dmg-staging/
+            hdiutil create -volname "VerusPDF" -srcfolder dmg-staging -ov -format UDZO VerusPDF.dmg
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: veruspdf-macos-universal
+          path: build/bin/VerusPDF.dmg
+          retention-days: 30
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev pkg-config
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build
+        run: wails build -platform linux/amd64 -o VerusPDF
+
+      - name: Package AppImage
+        working-directory: build/bin
+        run: |
+          mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps
+
+          cp VerusPDF AppDir/usr/bin/
+
+          cat > AppDir/veruspdf.desktop << 'EOF'
+          [Desktop Entry]
+          Name=VerusPDF
+          Exec=VerusPDF
+          Icon=veruspdf
+          Type=Application
+          Categories=Office;
+          Comment=Free PDF Editor
+          EOF
+          cp AppDir/veruspdf.desktop AppDir/usr/share/applications/
+
+          # Placeholder icon — replace with real icon later
+          convert -size 256x256 xc:'#63b3ed' -fill white -gravity center \
+            -pointsize 72 -annotate 0 'VP' \
+            AppDir/usr/share/icons/hicolor/256x256/apps/veruspdf.png 2>/dev/null \
+          || touch AppDir/usr/share/icons/hicolor/256x256/apps/veruspdf.png
+          cp AppDir/usr/share/icons/hicolor/256x256/apps/veruspdf.png AppDir/veruspdf.png
+
+          wget -q "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"
+          chmod +x linuxdeploy-x86_64.AppImage
+          ./linuxdeploy-x86_64.AppImage --appdir AppDir --output appimage || true
+          mv VerusPDF*.AppImage VerusPDF-linux-x64.AppImage 2>/dev/null || \
+          mv *.AppImage VerusPDF-linux-x64.AppImage 2>/dev/null || \
+          cp VerusPDF VerusPDF-linux-x64.AppImage
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: veruspdf-linux-x64
+          path: build/bin/VerusPDF-linux-x64.AppImage
+          retention-days: 30
