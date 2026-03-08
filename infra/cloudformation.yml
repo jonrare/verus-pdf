@@ -1,0 +1,235 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: VerusPDF - Landing page + downloads CDN infrastructure
+
+# ─────────────────────────────────────────────────────────────────────────
+# USAGE:
+#   1. Register veruspdf.com in Route 53 (or have a hosted zone ready)
+#   2. Request an ACM certificate for *.veruspdf.com + veruspdf.com
+#      in us-east-1 (CloudFront requires us-east-1 certs)
+#   3. Deploy this stack:
+#
+#      aws cloudformation deploy \
+#        --template-file infra/cloudformation.yml \
+#        --stack-name veruspdf-infra \
+#        --parameter-overrides \
+#            DomainName=veruspdf.com \
+#            CertificateArn=arn:aws:acm:us-east-1:ACCOUNT:certificate/CERT_ID \
+#            HostedZoneId=Z0123456789ABCDEF
+# ─────────────────────────────────────────────────────────────────────────
+
+Parameters:
+  DomainName:
+    Type: String
+    Default: veruspdf.com
+    Description: Root domain name
+
+  CertificateArn:
+    Type: String
+    Description: ACM certificate ARN (must be in us-east-1 for CloudFront)
+
+  HostedZoneId:
+    Type: String
+    Description: Route 53 hosted zone ID for the domain
+
+Resources:
+
+  # ═══════════════════════════════════════════════════════════════════════
+  # S3 Buckets
+  # ═══════════════════════════════════════════════════════════════════════
+
+  # Landing page bucket
+  SiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref DomainName
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: false
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: false
+
+  SiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SiteBucket
+      PolicyDocument:
+        Statement:
+          - Sid: AllowCloudFrontOAC
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub '${SiteBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                'AWS:SourceArn': !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}'
+
+  # Downloads bucket
+  DownloadsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'downloads.${DomainName}'
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ['*']
+            AllowedMethods: [GET, HEAD]
+            AllowedOrigins: ['*']
+            MaxAge: 3600
+
+  DownloadsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DownloadsBucket
+      PolicyDocument:
+        Statement:
+          - Sid: AllowCloudFrontOAC
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub '${DownloadsBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                'AWS:SourceArn': !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}'
+
+  # ═══════════════════════════════════════════════════════════════════════
+  # CloudFront
+  # ═══════════════════════════════════════════════════════════════════════
+
+  CloudFrontOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub 'veruspdf-oac'
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: VerusPDF - site + downloads
+        DefaultRootObject: index.html
+        PriceClass: PriceClass_100  # US, Canada, Europe (cheapest)
+        HttpVersion: http2and3
+
+        Aliases:
+          - !Ref DomainName
+          - !Sub 'www.${DomainName}'
+          - !Sub 'downloads.${DomainName}'
+
+        ViewerCertificate:
+          AcmCertificateArn: !Ref CertificateArn
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+
+        # Default behavior: landing page
+        DefaultCacheBehavior:
+          TargetOriginId: site-origin
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # CachingOptimized
+          Compress: true
+          AllowedMethods: [GET, HEAD]
+
+        # /latest/* and /v*/* → downloads bucket
+        CacheBehaviors:
+          - PathPattern: 'latest/*'
+            TargetOriginId: downloads-origin
+            ViewerProtocolPolicy: redirect-to-https
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+            Compress: true
+            AllowedMethods: [GET, HEAD]
+          - PathPattern: 'v*/*'
+            TargetOriginId: downloads-origin
+            ViewerProtocolPolicy: redirect-to-https
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+            Compress: true
+            AllowedMethods: [GET, HEAD]
+
+        Origins:
+          - Id: site-origin
+            DomainName: !GetAtt SiteBucket.RegionalDomainName
+            OriginAccessControlId: !Ref CloudFrontOAC
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+
+          - Id: downloads-origin
+            DomainName: !GetAtt DownloadsBucket.RegionalDomainName
+            OriginAccessControlId: !Ref CloudFrontOAC
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+
+        CustomErrorResponses:
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 10
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 10
+
+  # ═══════════════════════════════════════════════════════════════════════
+  # Route 53 DNS
+  # ═══════════════════════════════════════════════════════════════════════
+
+  DNSRecordRoot:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt CloudFrontDistribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW2  # CloudFront's fixed hosted zone ID
+
+  DNSRecordWWW:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub 'www.${DomainName}'
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt CloudFrontDistribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW2
+
+  DNSRecordDownloads:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub 'downloads.${DomainName}'
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt CloudFrontDistribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW2
+
+Outputs:
+  SiteBucketName:
+    Value: !Ref SiteBucket
+
+  DownloadsBucketName:
+    Value: !Ref DownloadsBucket
+
+  CloudFrontDistributionId:
+    Description: Set this as CLOUDFRONT_DISTRIBUTION_ID in GitHub Secrets
+    Value: !Ref CloudFrontDistribution
+
+  CloudFrontDomain:
+    Value: !GetAtt CloudFrontDistribution.DomainName
+
+  SiteURL:
+    Value: !Sub 'https://${DomainName}'
+
+  DownloadURLWindows:
+    Value: !Sub 'https://downloads.${DomainName}/latest/VerusPDF-windows-x64.exe'
+
+  DownloadURLMac:
+    Value: !Sub 'https://downloads.${DomainName}/latest/VerusPDF-macos-universal.dmg'
+
+  DownloadURLLinux:
+    Value: !Sub 'https://downloads.${DomainName}/latest/VerusPDF-linux-x64.AppImage'
