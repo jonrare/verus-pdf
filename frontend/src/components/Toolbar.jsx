@@ -1,5 +1,6 @@
 import { useAppStore } from '../stores/appStore'
 import { OpenFileDialog, OpenDocument, SaveFileDialog, SaveDocument } from '../wails.js'
+import { friendlyError } from '../friendlyError'
 import { zoomIn, zoomOut, ZOOM_LEVELS } from '../zoomLevels'
 import {
   FolderOpen, Save, ChevronLeft, ChevronRight,
@@ -13,6 +14,7 @@ export default function Toolbar() {
     setCurrentPage, setZoom, setToolbarMode,
     setSidebarOpen, sidebarOpen,
     openTab, setDocument, addRecentFile,
+    finishOperation, failOperation,
   } = useAppStore()
 
   const totalPages = document?.pageCount || 0
@@ -36,11 +38,22 @@ export default function Toolbar() {
   const handleSave = async () => {
     if (!document) return
     const originalPath = document.originalPath ?? document.path
-    if (document.path === originalPath) { return handleSaveAs() }  // nothing to overwrite yet
-    const result = await SaveDocument(document.path, originalPath)
-    if (result?.error) { alert(result.error); return }
-    const doc = await OpenDocument(originalPath)
-    if (!doc?.error) { setDocument({ ...doc, path: originalPath, originalPath, tempSlot: document.tempSlot }) }
+    // No edits yet — working file IS the original, nothing to copy
+    if (document.path === originalPath) {
+      finishOperation('Saved')
+      return
+    }
+    try {
+      const result = await SaveDocument(document.path, originalPath)
+      if (result?.error) { failOperation(`Save failed: ${friendlyError(result.error)}`); return }
+      const doc = await OpenDocument(originalPath)
+      if (!doc?.error) {
+        setDocument({ ...doc, path: originalPath, originalPath, tempSlot: document.tempSlot })
+        finishOperation('Saved')
+      }
+    } catch (err) {
+      failOperation(`Save failed: ${friendlyError(err)}`)
+    }
   }
 
   const handleSaveAs = async () => {
@@ -48,11 +61,18 @@ export default function Toolbar() {
     const baseName   = (document.originalPath ?? document.path).split(/[\\/]/).pop()
     const outputPath = await SaveFileDialog('Save As', baseName)
     if (!outputPath) return
-    const result = await SaveDocument(document.path, outputPath)
-    if (result?.error) { alert(result.error); return }
-    // Reload from saved location and update the tab to reflect the new canonical path
-    const doc = await OpenDocument(outputPath)
-    if (!doc?.error) { setDocument({ ...doc, originalPath: outputPath }); addRecentFile(outputPath) }
+    try {
+      const result = await SaveDocument(document.path, outputPath)
+      if (result?.error) { failOperation(`Save failed: ${friendlyError(result.error)}`); return }
+      const doc = await OpenDocument(outputPath)
+      if (!doc?.error) {
+        setDocument({ ...doc, originalPath: outputPath })
+        addRecentFile(outputPath)
+        finishOperation('Saved')
+      }
+    } catch (err) {
+      failOperation(`Save failed: ${friendlyError(err)}`)
+    }
   }
 
   const handleReload = async () => {

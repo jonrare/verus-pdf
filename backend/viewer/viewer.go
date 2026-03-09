@@ -201,20 +201,32 @@ func (s *Service) OpenDocument(filePath string) DocumentInfo {
 }
 
 func (s *Service) SaveDocument(inputPath, outputPath string) Result {
-	src, err := os.Open(inputPath)
+	// Read entire source into memory — safely handles inputPath == outputPath
+	data, err := os.ReadFile(inputPath)
 	if err != nil {
 		return Result{Error: fmt.Sprintf("cannot open source: %v", err)}
 	}
-	defer src.Close()
+	if len(data) == 0 {
+		return Result{Error: "The source file is empty."}
+	}
 
-	dst, err := os.Create(outputPath)
-	if err != nil {
+	// Resolve to absolute paths for reliable comparison
+	absIn, err1 := filepath.Abs(inputPath)
+	absOut, err2 := filepath.Abs(outputPath)
+	if err1 == nil && err2 == nil && strings.EqualFold(absIn, absOut) {
+		// Source and destination are the same file — nothing to copy
+		return Result{OutputPath: outputPath}
+	}
+
+	// Write to temp, then rename — prevents empty output on failure
+	tmpPath := outputPath + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+		os.Remove(tmpPath)
 		return Result{Error: fmt.Sprintf("cannot create output: %v", err)}
 	}
-	defer dst.Close()
-
-	if _, err := io.Copy(dst, src); err != nil {
-		return Result{Error: fmt.Sprintf("copy failed: %v", err)}
+	if err := os.Rename(tmpPath, outputPath); err != nil {
+		os.Remove(tmpPath)
+		return Result{Error: fmt.Sprintf("cannot create output: %v", err)}
 	}
 	return Result{OutputPath: outputPath}
 }

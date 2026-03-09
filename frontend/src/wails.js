@@ -234,6 +234,12 @@ export async function ReplaceSpanText(inputPath, outputPath, pageNum, streamInde
   return window.go.edit.Service.ReplaceSpanText(inputPath, outputPath, pageNum, streamIndex, opStart, opEnd, newText)
 }
 
+// EditMergedSpans(inputPath, outputPath string, pageNum int, subSpans []SubSpanInfo, originalMerged, newText string) TextEditResult
+export async function EditMergedSpans(inputPath, outputPath, pageNum, subSpans, originalMerged, newText) {
+  await ready(() => window.go?.edit?.Service?.EditMergedSpans)
+  return window.go.edit.Service.EditMergedSpans(inputPath, outputPath, pageNum, subSpans, originalMerged, newText)
+}
+
 // DebugPageStream(inputPath string, pageNum int) (string, error)
 export async function DebugPageStream(inputPath, pageNum) {
   await ready(() => window.go?.edit?.Service?.DebugPageStream)
@@ -252,4 +258,18 @@ export async function AddBookmark(inputPath, outputPath, title, page) {
 export async function RemoveBookmark(inputPath, outputPath, title, page) {
   await ready(() => window.go?.bookmarks?.Service?.RemoveBookmark)
   return window.go.bookmarks.Service.RemoveBookmark(inputPath, outputPath, title, page)
+}
+
+// ── Forms ─────────────────────────────────────────────────────────────────
+export async function GetFormFields(inputPath) {
+  await ready(() => window.go?.forms?.Service?.GetFormFields)
+  return window.go.forms.Service.GetFormFields(inputPath)
+}
+export async function FillFormFields(inputPath, outputPath, values) {
+  await ready(() => window.go?.forms?.Service?.FillFormFields)
+  return window.go.forms.Service.FillFormFields(inputPath, outputPath, values)
+}
+export async function ResetForm(inputPath, outputPath) {
+  await ready(() => window.go?.forms?.Service?.ResetForm)
+  return window.go.forms.Service.ResetForm(inputPath, outputPath)
 }

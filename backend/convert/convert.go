@@ -110,7 +110,7 @@ func (s *Service) PDFToText(inputPath string) TextResult {
 
 	text := strings.Join(pages, "\n\n")
 	if len(pages) == 0 {
-		text = "(No selectable text found in this PDF)"
+		text = "No selectable text found in this PDF.\n\nThis file may contain images or graphics instead of text. If you can see text but it wasn't extracted, the text was likely converted to shapes when the file was created."
 	}
 
 	// Safety net: strip any null bytes that slipped through from CID fonts

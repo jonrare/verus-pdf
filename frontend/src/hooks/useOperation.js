@@ -1,5 +1,6 @@
 import { useAppStore } from '../stores/appStore'
 import { TempPath, TempPathB, OpenDocument, OpenDirectoryDialog } from '../wails.js'
+import { friendlyError } from '../friendlyError'
 
 export function useOperation() {
   const { document, startOperation, finishOperation, failOperation, setDocument, pushUndo } = useAppStore()
@@ -21,16 +22,16 @@ export function useOperation() {
     try {
       const result = await fn(tempPath)
       const errMsg  = Array.isArray(result) ? result[1] : result?.error
-      if (errMsg) { failOperation(errMsg); return }
+      if (errMsg) { failOperation(friendlyError(errMsg)); return }
 
       const doc = await OpenDocument(tempPath)
-      if (doc?.error) { failOperation(doc.error); return }
+      if (doc?.error) { failOperation(friendlyError(doc.error)); return }
 
       setDocument({ ...doc, path: tempPath, originalPath, tempSlot: nextSlot })
       finishOperation(`${title} applied — use Save As to keep`)
       if (onSuccess) await onSuccess(tempPath)
     } catch (e) {
-      failOperation(e.message ?? String(e))
+      failOperation(friendlyError(e))
     }
   }
 
@@ -42,11 +43,11 @@ export function useOperation() {
     try {
       const result = await fn(dir)
       const errMsg  = Array.isArray(result) ? result[1] : result?.error
-      if (errMsg) { failOperation(errMsg); return }
+      if (errMsg) { failOperation(friendlyError(errMsg)); return }
       const count = result?.files?.length
       finishOperation(count ? `${count} file(s) saved to folder` : 'Done')
     } catch (e) {
-      failOperation(e.message ?? String(e))
+      failOperation(friendlyError(e))
     }
   }
 

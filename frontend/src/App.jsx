@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useAppStore } from './stores/appStore'
+import { friendlyError } from './friendlyError'
 import Titlebar from './components/Titlebar'
 import Toolbar from './components/Toolbar'
 import TabBar from './components/TabBar'
@@ -47,28 +48,42 @@ export default function App() {
       // Ctrl+S — save (overwrite original); Ctrl+Shift+S — save as
       if (mod && e.key === 's') {
         e.preventDefault()
-        const { document: doc, setDocument: sd } = useAppStore.getState()
+        const { document: doc, setDocument: sd, finishOperation, failOperation } = useAppStore.getState()
         if (!doc) return
         const { SaveFileDialog, SaveDocument, OpenDocument } = await import('./wails.js')
         const originalPath = doc.originalPath ?? doc.path
-        const isSaveAs = e.shiftKey || doc.path === originalPath  // shift or no changes yet → prompt
 
         let destPath
-        if (isSaveAs) {
-          const baseName = originalPath.split(/[\/]/).pop()
+        if (e.shiftKey) {
+          // Shift+Ctrl+S → always prompt for new location
+          const baseName = originalPath.split(/[\/\\]/).pop()
           destPath = await SaveFileDialog('Save As', baseName)
           if (!destPath) return
         } else {
+          // Ctrl+S → save directly to original path
           destPath = originalPath
+          // If no edits have been made (working file IS the original), nothing to do
+          if (doc.path === originalPath) {
+            finishOperation('Saved')
+            return
+          }
         }
 
-        const result = await SaveDocument(doc.path, destPath)
-        if (result?.error) return
+        try {
+          const result = await SaveDocument(doc.path, destPath)
+          if (result?.error) {
+            failOperation(`Save failed: ${friendlyError(result.error)}`)
+            return
+          }
 
-        // After save, reload from the saved path so doc.path === doc.originalPath (clean state)
-        const reloaded = await OpenDocument(destPath)
-        if (!reloaded?.error) {
-          sd({ ...reloaded, path: destPath, originalPath: destPath, tempSlot: doc.tempSlot })
+          // After save, reload from the saved path so doc.path === doc.originalPath (clean state)
+          const reloaded = await OpenDocument(destPath)
+          if (!reloaded?.error) {
+            sd({ ...reloaded, path: destPath, originalPath: destPath, tempSlot: doc.tempSlot })
+            finishOperation('Saved')
+          }
+        } catch (err) {
+          failOperation(`Save failed: ${friendlyError(err)}`)
         }
         return
       }

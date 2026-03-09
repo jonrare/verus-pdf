@@ -167,5 +167,6 @@ export const useAppStore = create((set, get) => ({
   failOperation: (message) => {
     if (statusTimer) clearTimeout(statusTimer)
     set({ statusMessage: { message, type: 'error' } })
+    statusTimer = setTimeout(() => set({ statusMessage: null }), 5000)
   },
 }))

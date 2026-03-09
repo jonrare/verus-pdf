@@ -34,7 +34,7 @@ export default function ConvertPanel() {
       const result = await PDFToText(docPath)
       if (result?.error) { failOperation(result.error); return }
       finishOperation('Text extracted')
-      setTextResult(result?.text || '(No selectable text found in this PDF)')
+      setTextResult(result?.text || 'No selectable text found in this PDF.\n\nThis file may contain images or graphics instead of text.')
       setHasText(true)
       setShowText(true)
     } catch (e) {
