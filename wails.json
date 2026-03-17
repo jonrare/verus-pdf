@@ -7,6 +7,23 @@
   "frontend:dev:watcher": "npm run dev",
   "frontend:dev:serverUrl": "auto",
   "author": {
-    "name": "VerusPDF"
+    "name": "Jonathan Rarey",
+    "email": "jonathan.rarey@gmail.com"
+  },
+  "info": {
+    "companyName": "Jonathan Rarey",
+    "productName": "VerusPDF",
+    "productVersion": "1.0.0",
+    "copyright": "Copyright © 2025 Jonathan Rarey",
+    "comments": "Free PDF Editor - https://veruspdf.com",
+    "fileAssociations": [
+      {
+        "ext": "pdf",
+        "name": "PDF Document",
+        "description": "Open with VerusPDF",
+        "iconName": "appicon",
+        "role": "Editor"
+      }
+    ]
   }
 }
