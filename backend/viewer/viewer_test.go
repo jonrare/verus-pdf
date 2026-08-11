@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+
 	"veruspdf/backend/internal/pdftest"
 )
 
@@ -25,6 +28,9 @@ func TestLooksEncrypted(t *testing.T) {
 		{"hex literal", errors.New("invalid hex literal"), true},
 		{"unrelated", errors.New("no such file or directory"), false},
 		{"empty", errors.New(""), false},
+		// A damaged file is not a protected one. Reporting it as encrypted
+		// sends the user to remove protection that was never there.
+		{"corrupt is not encrypted", errors.New("corrupt xref table"), false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -61,42 +67,237 @@ func TestIsEncrypted_PlainPDF(t *testing.T) {
 	}
 }
 
-// ── Temp paths ───────────────────────────────────────────────────────────────
+// Encryption is decided from the trailer, not by scanning the file for the
+// bytes "/Encrypt". A document that merely draws that text, or names a field
+// after it, is not protected.
+func TestEncryptionStatus_IgnoresTheLiteralBytesInContent(t *testing.T) {
+	path := pdftest.TextPage(t, "mentions.pdf",
+		"BT /F1 12 Tf 72 700 Td (see /Encrypt for details) Tj ET")
 
-// TempPath must reduce whatever it is given to a base name, so a caller
-// passing a full path cannot direct writes outside the temp directory.
-func TestTempPath_StripsDirectoryComponents(t *testing.T) {
+	if got := New().EncryptionStatus(path); got.Encrypted {
+		t.Error("a plain document containing the text \"/Encrypt\" was reported as encrypted")
+	}
+}
+
+// An owner-password-only document opens without a password but is encrypted:
+// Encrypted true, HasUserPW false. Conflating the two hides the Remove
+// Protection panel for exactly the files that need it.
+func TestEncryptionStatus_OwnerPasswordOnly(t *testing.T) {
+	src := pdftest.TextPage(t, "plain.pdf", "BT /F1 12 Tf 72 700 Td (Hello) Tj ET")
+	enc := filepath.Join(t.TempDir(), "enc.pdf")
+
+	conf := model.NewDefaultConfiguration()
+	conf.EncryptUsingAES = true
+	conf.EncryptKeyLength = 256
+	conf.OwnerPW = "owner-pw"
+	conf.UserPW = ""
+	if err := api.EncryptFile(src, enc, conf); err != nil {
+		t.Fatalf("EncryptFile: %v", err)
+	}
+
+	got := New().EncryptionStatus(enc)
+	if !got.Encrypted {
+		t.Error("an owner-password-protected file was not reported as encrypted")
+	}
+	if got.HasUserPW {
+		t.Error("HasUserPW is set, but the file opens without a password")
+	}
+}
+
+// A user password means the file cannot be opened at all without one.
+func TestEncryptionStatus_UserPassword(t *testing.T) {
+	src := pdftest.TextPage(t, "plain.pdf", "BT /F1 12 Tf 72 700 Td (Hello) Tj ET")
+	enc := filepath.Join(t.TempDir(), "enc.pdf")
+
+	conf := model.NewDefaultConfiguration()
+	conf.EncryptUsingAES = true
+	conf.EncryptKeyLength = 256
+	conf.OwnerPW = "owner-pw"
+	conf.UserPW = "user-pw"
+	if err := api.EncryptFile(src, enc, conf); err != nil {
+		t.Fatalf("EncryptFile: %v", err)
+	}
+
+	got := New().EncryptionStatus(enc)
+	if !got.Encrypted || !got.HasUserPW {
+		t.Errorf("got %+v, want both Encrypted and HasUserPW", got)
+	}
+}
+
+// A damaged file is not encrypted; it is broken, and is reported elsewhere.
+func TestEncryptionStatus_GarbageIsNotEncrypted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "garbage.pdf")
+	if err := os.WriteFile(path, []byte("definitely not a PDF"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := New().EncryptionStatus(path); got.Encrypted || got.HasUserPW {
+		t.Errorf("got %+v, want a zero value for a damaged file", got)
+	}
+}
+
+// ── Working files ────────────────────────────────────────────────────────────
+
+// Every call must hand back a distinct path. The old two-slot scheme alternated
+// between exactly two files, so an undo stack deeper than one step pointed at
+// content that had already been overwritten.
+func TestNewWorkingPath_AlwaysUnique(t *testing.T) {
 	svc := New()
-	tmp := os.TempDir()
+	t.Cleanup(svc.Cleanup)
 
-	for _, in := range []string{
-		"report.pdf",
-		"/home/user/documents/report.pdf",
-		"../../etc/passwd",
-		"/etc/passwd",
-	} {
-		got := svc.TempPath(in)
-		if filepath.Dir(got) != filepath.Clean(tmp) {
-			t.Errorf("TempPath(%q) = %q, which is outside %q", in, got, tmp)
+	seen := map[string]bool{}
+	for i := 0; i < 10; i++ {
+		p, err := svc.NewWorkingPath("report.pdf")
+		if err != nil {
+			t.Fatalf("NewWorkingPath: %v", err)
 		}
-		if strings.Contains(filepath.Base(got), "/") || strings.Contains(filepath.Base(got), `\`) {
-			t.Errorf("TempPath(%q) = %q, whose base still has separators", in, got)
+		if seen[p] {
+			t.Fatalf("path %q handed out twice after %d calls", p, i+1)
+		}
+		seen[p] = true
+	}
+}
+
+// Two documents with the same base name from different folders must not share
+// a working file.
+func TestNewWorkingPath_NoCollisionAcrossSameBaseName(t *testing.T) {
+	svc := New()
+	t.Cleanup(svc.Cleanup)
+
+	a, err := svc.NewWorkingPath("/home/user/quarterly/report.pdf")
+	if err != nil {
+		t.Fatalf("NewWorkingPath: %v", err)
+	}
+	b, err := svc.NewWorkingPath("/home/user/annual/report.pdf")
+	if err != nil {
+		t.Fatalf("NewWorkingPath: %v", err)
+	}
+	if a == b {
+		t.Errorf("both documents resolved to %q", a)
+	}
+}
+
+// Only the base name is used, so a caller cannot direct writes out of the
+// session directory.
+func TestNewWorkingPath_StaysInsideSessionDirectory(t *testing.T) {
+	svc := New()
+	t.Cleanup(svc.Cleanup)
+
+	first, err := svc.NewWorkingPath("doc.pdf")
+	if err != nil {
+		t.Fatalf("NewWorkingPath: %v", err)
+	}
+	dir := filepath.Dir(first)
+
+	for _, in := range []string{"../../etc/passwd", "/etc/passwd", "a/b/c.pdf", ".", "/"} {
+		got, err := svc.NewWorkingPath(in)
+		if err != nil {
+			t.Fatalf("NewWorkingPath(%q): %v", in, err)
+		}
+		if filepath.Dir(got) != dir {
+			t.Errorf("NewWorkingPath(%q) = %q, which escapes %q", in, got, dir)
 		}
 	}
 }
 
-// The two slots exist so an operation never reads and writes the same file.
-func TestTempPath_SlotsAreDistinct(t *testing.T) {
+// The session directory holds decrypted copies of protected documents, so it
+// must not be readable by other users.
+func TestNewWorkingPath_SessionDirectoryIsPrivate(t *testing.T) {
 	svc := New()
-	if a, b := svc.TempPath("doc.pdf"), svc.TempPathB("doc.pdf"); a == b {
-		t.Errorf("both slots resolved to %q", a)
+	t.Cleanup(svc.Cleanup)
+
+	p, err := svc.NewWorkingPath("doc.pdf")
+	if err != nil {
+		t.Fatalf("NewWorkingPath: %v", err)
+	}
+
+	info, err := os.Stat(filepath.Dir(p))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm&0o077 != 0 {
+		t.Errorf("session directory mode is %#o, want no group or other access", perm)
 	}
 }
 
-func TestTempPath_Deterministic(t *testing.T) {
+// Old working files are pruned so a long session cannot fill the disk, but the
+// window must stay deep enough to cover the UI's 20-level undo stack.
+func TestNewWorkingPath_PrunesOldestBeyondTheWindow(t *testing.T) {
 	svc := New()
-	if a, b := svc.TempPath("doc.pdf"), svc.TempPath("doc.pdf"); a != b {
-		t.Errorf("TempPath is not deterministic: %q then %q", a, b)
+	t.Cleanup(svc.Cleanup)
+
+	var paths []string
+	for i := 0; i < maxWorkingFiles+5; i++ {
+		p, err := svc.NewWorkingPath("doc.pdf")
+		if err != nil {
+			t.Fatalf("NewWorkingPath: %v", err)
+		}
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, p)
+	}
+
+	if maxWorkingFiles < 20 {
+		t.Errorf("maxWorkingFiles is %d, below the 20-level undo stack", maxWorkingFiles)
+	}
+	for _, p := range paths[:5] {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("%q should have been pruned", filepath.Base(p))
+		}
+	}
+	for _, p := range paths[5:] {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("%q should still exist: %v", filepath.Base(p), err)
+		}
+	}
+}
+
+func TestCleanup_RemovesEverything(t *testing.T) {
+	svc := New()
+
+	p, err := svc.NewWorkingPath("doc.pdf")
+	if err != nil {
+		t.Fatalf("NewWorkingPath: %v", err)
+	}
+	if err := os.WriteFile(p, []byte("sensitive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Dir(p)
+
+	svc.Cleanup()
+
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("session directory %q survived cleanup", dir)
+	}
+}
+
+func TestCleanup_IsSafeToCallTwiceAndWhenUnused(t *testing.T) {
+	New().Cleanup() // never allocated a directory
+
+	svc := New()
+	if _, err := svc.NewWorkingPath("doc.pdf"); err != nil {
+		t.Fatalf("NewWorkingPath: %v", err)
+	}
+	svc.Cleanup()
+	svc.Cleanup()
+}
+
+// After cleanup the service must still work — a new directory is allocated.
+func TestNewWorkingPath_WorksAfterCleanup(t *testing.T) {
+	svc := New()
+	if _, err := svc.NewWorkingPath("doc.pdf"); err != nil {
+		t.Fatalf("NewWorkingPath: %v", err)
+	}
+	svc.Cleanup()
+
+	p, err := svc.NewWorkingPath("doc.pdf")
+	if err != nil {
+		t.Fatalf("NewWorkingPath after Cleanup: %v", err)
+	}
+	t.Cleanup(svc.Cleanup)
+	if _, err := os.Stat(filepath.Dir(p)); err != nil {
+		t.Errorf("a fresh session directory was not created: %v", err)
 	}
 }
 

@@ -205,15 +205,13 @@ export async function Validate(inputPath) {
   return window.go.optimize.Service.Validate(inputPath)
 }
 
-// TempPath(baseName string) string
-export async function TempPath(baseName) {
-  await ready(() => window.go?.viewer?.Service?.TempPath)
-  return window.go.viewer.Service.TempPath(baseName)
-}
-
-export async function TempPathB(baseName) {
-  await ready(() => window.go?.viewer?.Service?.TempPathB)
-  return window.go.viewer.Service.TempPathB(baseName)
+// NewWorkingPath(baseName string) (string, error)
+// Returns a fresh path in the session's private scratch directory. Every call
+// returns a distinct file, so an operation never reads and writes the same
+// path and every undo snapshot stays valid.
+export async function NewWorkingPath(baseName) {
+  await ready(() => window.go?.viewer?.Service?.NewWorkingPath)
+  return window.go.viewer.Service.NewWorkingPath(baseName)
 }
 
 // ExtractPageText(inputPath string, pageNum int) ([]TextSpan, error)

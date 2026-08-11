@@ -41,7 +41,7 @@ export default function App() {
         if (!snapshot) return
         const { OpenDocument } = await import('./wails.js')
         const doc = await OpenDocument(snapshot.path)
-        if (!doc?.error) setDocument({ ...doc, path: snapshot.path, tempSlot: snapshot.tempSlot })
+        if (!doc?.error) setDocument({ ...doc, path: snapshot.path })
         return
       }
 
@@ -80,7 +80,7 @@ export default function App() {
           // After save, reload from the saved path so doc.path === doc.originalPath (clean state)
           const reloaded = await OpenDocument(destPath)
           if (!reloaded?.error) {
-            sd({ ...reloaded, path: destPath, originalPath: destPath, tempSlot: doc.tempSlot })
+            sd({ ...reloaded, path: destPath, originalPath: destPath })
             finishOperation('Saved')
           }
         } catch (err) {

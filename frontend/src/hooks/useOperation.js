@@ -1,5 +1,5 @@
 import { useAppStore } from '../stores/appStore'
-import { TempPath, TempPathB, OpenDocument, OpenDirectoryDialog } from '../wails.js'
+import { NewWorkingPath, OpenDocument, OpenDirectoryDialog } from '../wails.js'
 import { friendlyError } from '../friendlyError'
 
 export function useOperation() {
@@ -11,11 +11,9 @@ export function useOperation() {
     const originalPath = document.originalPath ?? docPath
     const sourceName   = originalPath.split(/[\\/]/).pop()
 
-    // Alternate between two temp slots so input and output are never the same file.
-    // First op (no slot set): write to slot B. Next: back to A. And so on.
-    const writeToB = document.tempSlot !== 'b'
-    const tempPath = writeToB ? await TempPathB(sourceName) : await TempPath(sourceName)
-    const nextSlot = writeToB ? 'b' : 'a'
+    // A fresh working file per operation: input and output are never the same
+    // path, and each undo snapshot keeps pointing at content nothing overwrites.
+    const tempPath = await NewWorkingPath(sourceName)
 
     pushUndo()
     startOperation(title)
@@ -27,7 +25,7 @@ export function useOperation() {
       const doc = await OpenDocument(tempPath)
       if (doc?.error) { failOperation(friendlyError(doc.error)); return }
 
-      setDocument({ ...doc, path: tempPath, originalPath, tempSlot: nextSlot })
+      setDocument({ ...doc, path: tempPath, originalPath })
       finishOperation(`${title} applied — use Save As to keep`)
       if (onSuccess) await onSuccess(tempPath)
     } catch (e) {

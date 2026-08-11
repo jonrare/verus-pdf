@@ -133,11 +133,9 @@ export default function BookmarksPanel() {
   const handleAdd = async () => {
     if (!docPath) return
     const title = newTitle.trim() || `Page ${currentPage}`
-    const { TempPath, TempPathB, OpenDocument } = await import('../../wails.js')
+    const { NewWorkingPath, OpenDocument } = await import('../../wails.js')
     const sourceName = docPath.split(/[\/]/).pop()
-    const slot = useAppStore.getState().document?.tempSlot
-    const writeToB = slot !== 'b'
-    const tempPath = writeToB ? await TempPathB(sourceName) : await TempPath(sourceName)
+    const tempPath = await NewWorkingPath(sourceName)
     startOperation('Add Bookmark')
     try {
       const result = await AddBookmark(docPath, tempPath, title, currentPage)
@@ -151,7 +149,6 @@ export default function BookmarksPanel() {
         ...doc,
         path: tempPath,
         originalPath: useAppStore.getState().document?.originalPath ?? docPath,
-        tempSlot: writeToB ? 'b' : 'a',
       })
       useAppStore.getState().setCurrentPage(savedPage)
       finishOperation('Bookmark added')
@@ -165,11 +162,9 @@ export default function BookmarksPanel() {
 
   const handleDelete = async (bm) => {
     if (!docPath) return
-    const { TempPath, TempPathB, OpenDocument } = await import('../../wails.js')
+    const { NewWorkingPath, OpenDocument } = await import('../../wails.js')
     const sourceName = docPath.split(/[\/]/).pop()
-    const slot = useAppStore.getState().document?.tempSlot
-    const writeToB = slot !== 'b'
-    const tempPath = writeToB ? await TempPathB(sourceName) : await TempPath(sourceName)
+    const tempPath = await NewWorkingPath(sourceName)
     startOperation('Remove Bookmark')
     try {
       const result = await RemoveBookmark(docPath, tempPath, bm.title, bm.page)
@@ -181,7 +176,6 @@ export default function BookmarksPanel() {
         ...doc,
         path: tempPath,
         originalPath: useAppStore.getState().document?.originalPath ?? docPath,
-        tempSlot: writeToB ? 'b' : 'a',
       })
       useAppStore.getState().setCurrentPage(savedPage)
       finishOperation('Bookmark removed')

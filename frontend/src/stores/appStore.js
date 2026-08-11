@@ -63,7 +63,7 @@ export const useAppStore = create((set, get) => ({
     }
 
     const id  = newTabId()
-    const tab = { id, document: { ...doc, originalPath }, currentPage: 1, zoom: 1.0, tempSlot: undefined, undoStack: [] }
+    const tab = { id, document: { ...doc, originalPath }, currentPage: 1, zoom: 1.0, undoStack: [] }
     const newTabs = [...tabs, tab]
     set({ tabs: newTabs, activeTabId: id, ...mirrors(tab) })
   },
@@ -73,7 +73,7 @@ export const useAppStore = create((set, get) => ({
 
     // If this is the last tab, clear it rather than removing it
     if (tabs.length === 1) {
-      const blank = { ...tabs[0], document: null, currentPage: 1, zoom: 1.0, tempSlot: undefined }
+      const blank = { ...tabs[0], document: null, currentPage: 1, zoom: 1.0 }
       set({ tabs: [blank], activeTabId: blank.id, ...mirrors(blank) })
       return
     }
@@ -103,7 +103,7 @@ export const useAppStore = create((set, get) => ({
     const originalPath = doc.originalPath ?? doc.path
     const updated      = { ...doc, originalPath }
     const newTabs = tabs.map(t =>
-      t.id === activeTabId ? { ...t, document: updated, currentPage: 1, tempSlot: doc.tempSlot } : t
+      t.id === activeTabId ? { ...t, document: updated, currentPage: 1 } : t
     )
     const activeTab = newTabs.find(t => t.id === activeTabId)
     set({ tabs: newTabs, ...mirrors(activeTab) })
@@ -127,7 +127,7 @@ export const useAppStore = create((set, get) => ({
     const { tabs, activeTabId } = get()
     const activeTab = tabs.find(t => t.id === activeTabId)
     if (!activeTab?.document) return
-    const snapshot = { path: activeTab.document.path, tempSlot: activeTab.document.tempSlot }
+    const snapshot = { path: activeTab.document.path }
     const undoStack = [...(activeTab.undoStack ?? []), snapshot].slice(-20) // max 20 levels
     const newTabs = tabs.map(t => t.id === activeTabId ? { ...t, undoStack } : t)
     set({ tabs: newTabs })

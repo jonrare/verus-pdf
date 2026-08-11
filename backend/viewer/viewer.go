@@ -1,7 +1,6 @@
 package viewer
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -9,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -17,6 +17,11 @@ import (
 
 type Service struct {
 	ctx context.Context
+
+	mu          sync.Mutex
+	sessionDir  string   // private scratch directory, created on first use
+	workingFile []string // paths handed out, oldest first
+	counter     int
 }
 
 func New() *Service { return &Service{} }
@@ -79,7 +84,11 @@ func (s *Service) OpenAnyFileDialog() (string, error) {
 	})
 }
 
-// looksEncrypted returns true if the error looks like a failed decrypt attempt.
+// looksEncrypted reports whether an open error means a password is required.
+//
+// Deliberately does NOT treat "corrupt" as encrypted: a genuinely damaged file
+// would then be reported to the user as password-protected, sending them to the
+// Security panel to remove protection that was never there.
 func looksEncrypted(err error) bool {
 	if err == nil {
 		return false
@@ -87,22 +96,11 @@ func looksEncrypted(err error) bool {
 	s := strings.ToLower(err.Error())
 	return strings.Contains(s, "password") ||
 		strings.Contains(s, "encrypt") ||
-		strings.Contains(s, "hex literal") ||
-		strings.Contains(s, "corrupt")
+		strings.Contains(s, "hex literal")
 }
 
 func (s *Service) IsEncrypted(filePath string) bool {
-	// Primary: scan raw PDF bytes for /Encrypt in the trailer.
-	// Every encrypted PDF has this entry regardless of whether a user password is set.
-	// An owner-password-only PDF opens fine without a password but still has /Encrypt.
-	if b, err := os.ReadFile(filePath); err == nil {
-		if bytes.Contains(b, []byte("/Encrypt")) {
-			return true
-		}
-	}
-	// Fallback: if reading fails with a password/corrupt error, it's encrypted.
-	_, err := api.ReadContextFile(filePath)
-	return looksEncrypted(err)
+	return s.EncryptionStatus(filePath).Encrypted
 }
 
 type EncryptionStatus struct {
@@ -110,19 +108,28 @@ type EncryptionStatus struct {
 	HasUserPW bool `json:"hasUserPW"` // true if a user (open) password is required
 }
 
-// EncryptionStatus returns encryption state for a file.
-// Encrypted=true means /Encrypt is present (owner or user password).
-// HasUserPW=true means the file can't be opened without a password.
+// EncryptionStatus reports the encryption state of a file.
+//
+// Encrypted means the trailer has an /Encrypt entry (§7.5.5); HasUserPW means
+// the file cannot be opened at all without a password. An owner-password-only
+// document is Encrypted but not HasUserPW — it opens freely, with permissions
+// restricted.
+//
+// This reads the trailer rather than scanning the file for the bytes
+// "/Encrypt", which matches inside content streams, text strings, and names
+// like /Encryptor, and reports plain documents as protected.
 func (s *Service) EncryptionStatus(filePath string) EncryptionStatus {
-	b, err := os.ReadFile(filePath)
+	ctx, err := api.ReadContextFile(filePath)
 	if err != nil {
+		// Unreadable without a password means a user password is set. Any
+		// other failure (missing file, malformed PDF) is not an encryption
+		// question and is reported elsewhere.
+		if looksEncrypted(err) {
+			return EncryptionStatus{Encrypted: true, HasUserPW: true}
+		}
 		return EncryptionStatus{}
 	}
-	encrypted := bytes.Contains(b, []byte("/Encrypt"))
-	// If ReadContextFile fails, a user (open) password is required.
-	_, openErr := api.ReadContextFile(filePath)
-	hasUserPW := looksEncrypted(openErr)
-	return EncryptionStatus{Encrypted: encrypted, HasUserPW: hasUserPW}
+	return EncryptionStatus{Encrypted: ctx.XRefTable != nil && ctx.XRefTable.Encrypt != nil}
 }
 
 func (s *Service) CopyFile(src, dst string) error {
@@ -243,13 +250,66 @@ func (s *Service) ReadFileBytes(filePath string) (string, error) {
 	return base64.StdEncoding.EncodeToString(data), nil
 }
 
-// TempPath returns a writable temp file path for the given name.
-// It always uses only the base filename, so callers may pass a full path safely.
-func (s *Service) TempPath(name string) string {
-	return filepath.Join(os.TempDir(), "veruspdf_"+filepath.Base(name))
+// maxWorkingFiles bounds how many intermediate files a session keeps. It sits
+// just above the UI's 20-level undo stack so every reachable undo target still
+// exists on disk.
+const maxWorkingFiles = 24
+
+// NewWorkingPath returns a fresh, unused path for the next edit in the chain.
+//
+// Every call returns a distinct file. That matters for three reasons the old
+// two-slot scheme got wrong:
+//
+//   - Undo. Snapshots pointed at one of two alternating paths, so by the third
+//     operation the file a snapshot named had already been overwritten and
+//     undoing twice restored the newest content instead of the older state.
+//   - Collisions. Paths were derived from the document's base name, so two
+//     tabs holding same-named files from different folders shared one working
+//     file and clobbered each other.
+//   - Disclosure. Files sat directly in the shared temp directory under
+//     predictable names with 0644 permissions, and nothing ever removed them —
+//     so a decrypted copy of a protected document outlived the session,
+//     world-readable. The session directory is created 0700 and removed on
+//     shutdown.
+//
+// Only the base name of the argument is used, so callers may pass a full path.
+func (s *Service) NewWorkingPath(name string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.sessionDir == "" {
+		dir, err := os.MkdirTemp("", "veruspdf-session-")
+		if err != nil {
+			return "", fmt.Errorf("could not create a working directory: %w", err)
+		}
+		s.sessionDir = dir
+	}
+
+	s.counter++
+	base := filepath.Base(name)
+	if base == "." || base == string(filepath.Separator) {
+		base = "document.pdf"
+	}
+	path := filepath.Join(s.sessionDir, fmt.Sprintf("%04d-%s", s.counter, base))
+
+	s.workingFile = append(s.workingFile, path)
+	for len(s.workingFile) > maxWorkingFiles {
+		os.Remove(s.workingFile[0])
+		s.workingFile = s.workingFile[1:]
+	}
+	return path, nil
 }
 
-// TempPathB is the second temp slot (read A / write B alternation).
-func (s *Service) TempPathB(name string) string {
-	return filepath.Join(os.TempDir(), "veruspdf_b_"+filepath.Base(name))
+// Cleanup removes the session's working directory and everything in it.
+// Called on application shutdown.
+func (s *Service) Cleanup() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.sessionDir == "" {
+		return
+	}
+	os.RemoveAll(s.sessionDir)
+	s.sessionDir = ""
+	s.workingFile = nil
 }

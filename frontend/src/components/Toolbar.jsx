@@ -48,7 +48,7 @@ export default function Toolbar() {
       if (result?.error) { failOperation(`Save failed: ${friendlyError(result.error)}`); return }
       const doc = await OpenDocument(originalPath)
       if (!doc?.error) {
-        setDocument({ ...doc, path: originalPath, originalPath, tempSlot: document.tempSlot })
+        setDocument({ ...doc, path: originalPath, originalPath })
         finishOperation('Saved')
       }
     } catch (err) {

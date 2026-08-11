@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useAppStore } from '../../stores/appStore'
 import { useOperation } from '../../hooks/useOperation'
-import { Encrypt, Decrypt, ChangePassword, EncryptionStatus, TempPathB, SaveFileDialog, CopyFile } from '../../wails.js'
+import { Encrypt, Decrypt, ChangePassword, EncryptionStatus, NewWorkingPath, SaveFileDialog, CopyFile } from '../../wails.js'
 import { Lock, Unlock, Key } from 'lucide-react'
 
 function Section({ title, icon: Icon, children }) {
@@ -56,7 +56,7 @@ export default function SecurityPanel() {
     const sourceName = docPath.split(/[/\\]/).pop()
     startOperation('Encrypt')
     try {
-      const tempPath = await TempPathB(sourceName)
+      const tempPath = await NewWorkingPath(sourceName)
       const result   = await Encrypt(docPath, tempPath, ownerPw, userPw, perms)
       if (result?.error) { failOperation(result.error); return }
       const dest = await SaveFileDialog('Save Encrypted PDF', sourceName)
@@ -130,11 +130,11 @@ export default function SecurityPanel() {
             <button className="primary" disabled={!curPw || !newPw}
               onClick={async () => {
                 if (!docPath) return
-                const { TempPath, SaveFileDialog: SFD, CopyFile: CF } = await import('../../wails.js')
+                const { NewWorkingPath: NWP, SaveFileDialog: SFD, CopyFile: CF } = await import('../../wails.js')
                 const sourceName = docPath.split(/[/\\]/).pop()
                 startOperation('Change Password')
                 try {
-                  const tempPath = await TempPath(sourceName)
+                  const tempPath = await NWP(sourceName)
                   const result   = await ChangePassword(docPath, tempPath, curPw, newPw)
                   if (result?.error) { failOperation(result.error); return }
                   const dest = await SFD('Save File With New Password', sourceName)

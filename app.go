@@ -51,4 +51,9 @@ func (a *App) startup(ctx context.Context) {
 	a.ConvertService.SetContext(ctx)
 }
 
-func (a *App) shutdown(ctx context.Context) {}
+// shutdown removes the session's working files. Without this, intermediate
+// copies of every edited document — including decrypted copies of protected
+// ones — would outlive the application.
+func (a *App) shutdown(ctx context.Context) {
+	a.ViewerService.Cleanup()
+}
