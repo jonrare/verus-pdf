@@ -482,8 +482,8 @@ func TestParseContentStream_TzHorizontalScale(t *testing.T) {
 	if len(spans) == 0 {
 		t.Fatal("no spans")
 	}
-	if p.ts.hScale != 80 {
-		t.Errorf("horizontal scale: got %v want 80", p.ts.hScale)
+	if p.gs.hScale != 80 {
+		t.Errorf("horizontal scale: got %v want 80", p.gs.hScale)
 	}
 }
 

@@ -108,10 +108,6 @@ These are real gaps, not design choices — treat them as a work list.
 | Area | Deviation | Clause |
 |---|---|---|
 | Block rewriting | `EditMergedSpans` replaces a whole `BT`…`ET` block with only the edited span's glyphs, discarding any other text in that block along with its `Tc`/`Tw`/`Tz`/`Tr` and colour operators. | §9.4 |
-| Graphics state | `q`/`Q` save and restore the font *name* but not the text state (`Tf` size, `Tc`, `Tw`, `TL`, `Tz`, `Ts`). The spec makes all of these part of the graphics state, so after a `Q` the font and its size can disagree. | §8.4.1 |
-| Text advance | `advanceTx` adds directly to `Tm.E`, ignoring the matrix's rotation and skew, and ignores `Tc`/`Tw`. Rotated or letter-spaced text drifts. | §9.4.4 |
-| Horizontal scaling | `Tz` is applied twice to the reported width in `showString` but once in `showTJArray`. | §9.3.4 |
-| Form XObjects | Nested XObject names are resolved against the *page's* `/Resources` rather than the enclosing form's, so nested forms lose their content. Fonts are inherited correctly. | §8.10.1 |
 | Font metrics | The standard 14 fonts carry no `/Widths` array, and no built-in metrics are compiled in, so their glyph advances are estimated at 0.5 em per character. See below — this is the highest-value gap. | §9.6.2.2 |
 | Simple font encoding | Replacement text is narrowed to one byte per rune rather than reverse-mapped through the font's encoding table, so characters that exist in WinAnsi above U+00FF (smart quotes, en dash, €) cannot be typed. | §9.6.6 |
 
@@ -127,6 +123,10 @@ Recorded so the tests that pin them are easy to find.
 | Literal strings | The tokeniser emitted a newline for a backslash-newline line continuation. `TestTokenise_LineContinuationEmitsNothing` | §7.3.4.2 |
 | Button fields | `/V` for checkbox and radio fields was written as a string, leaving widgets rendering as off. `TestFieldValue_ButtonsGetNameObjects` | §12.7.4.2 |
 | Text strings | Hex-literal field values were returned as raw hex, so UTF-16BE values surfaced as `FEFF…`. | §7.9.2.2 |
+| Graphics state | `q`/`Q` restored the font *name* but not the text state parameters (`Tf` size, `Tc`, `Tw`, `TL`, `Tz`, `Ts`), which §8.4.1 makes part of the graphics state — so a `Q` could leave the font and its size disagreeing. They now live in `graphicsState`; only the matrices, which `BT` resets, remain in `textState`. `TestGraphicsState_QRestoresTextStateParameters` | §8.4.1 |
+| Text advance | `advanceTx` added the displacement straight to `Tm.E`, correct only for an axis-aligned unscaled matrix, and ignored `Tc`/`Tw` entirely. Now `Tm' = Translate(tx,0) × Tm` with `tx = ((w0 − Tj/1000) × Tfs + Tc + Tw) × Th`. `TestAdvance_FollowsRotatedTextMatrix`, `TestTc_WidensTheAdvance`, `TestTw_AppliesToSpacesOnly` | §9.4.4 |
+| Horizontal scaling | `Tz` was applied twice to the width reported by `Tj` and once by `TJ`. Width is now measured as the distance the origin actually travelled in page space, so `Tz`, the text matrix and the CTM each apply exactly once. `TestTz_AppliedOnceAndConsistentlyAcrossTjAndTJ` | §9.3.4 |
+| Form XObjects | Nested XObject names resolved against the *page's* `/Resources` rather than the enclosing form's, so a form invoked from inside another form silently vanished. The parser now carries the resource dict in scope. `TestFormXObject_NestedResolvesAgainstFormResources` | §8.10.1 |
 | Stream addressing | Byte offsets were measured against the *concatenation* of a page's `/Contents` array (via `pdfcpu.ExtractPageContent`) but applied to individual stream objects, so any page with a `/Contents` array spliced at the wrong location. Spans inside a Form XObject were worse: offsets into the form's own stream, tagged `StreamIndex 0`. Extraction now reads the parts individually and tags each span with its real stream; anything that cannot be addressed is marked `notEditable` and both editors refuse it. `TestExtractText_SplitContentsReportsPerStreamOffsets`, `TestReplaceSpanText_EditsCorrectStreamOfSplitContents`, `TestExtractText_FormXObjectSpansAreNotEditable` | §7.8.2, §8.10.1 |
 
 ### The standard-14 metrics gap

@@ -132,24 +132,32 @@ func ExtractText(filePath string, pageNum int) ([]TextSpan, error) {
 // ── Graphics state ────────────────────────────────────────────────────────────
 
 // graphicsState holds the mutable state that q/Q saves and restores.
+//
+// §8.4.1 lists the text state parameters — font, size, Tc, Tw, Tz, TL, Ts and
+// the rendering mode — as part of the graphics state, so they belong here and
+// not in textState. Keeping the font name here but its size in textState, as
+// this once did, meant a Q could leave the two disagreeing.
 type graphicsState struct {
 	ctm            Matrix // current transformation matrix
 	fontKey        string // current font resource name
 	curFont        *fontInfo
 	textRenderMode int // Tr — 0=fill, 1=stroke, 2=fill+stroke, 3=invisible
+
+	tfSize    float64 // Tf — font size
+	charSpace float64 // Tc — extra space after each glyph
+	wordSpace float64 // Tw — extra space after the single-byte code 32
+	leading   float64 // TL — leading between lines
+	hScale    float64 // Tz — horizontal scaling, as a percentage
+	rise      float64 // Ts — text rise (superscript/subscript offset)
 }
 
 // ── Text state ────────────────────────────────────────────────────────────────
 
+// textState holds the matrices BT resets. Unlike the parameters above, these
+// are NOT part of the graphics state and are not saved by q/Q (§9.4.1).
 type textState struct {
-	tm        Matrix  // text matrix
-	tlm       Matrix  // text line matrix
-	tfSize    float64 // font size from Tf
-	charSpace float64 // Tc — extra space after each character
-	wordSpace float64 // Tw — extra space after space characters (char code 32)
-	leading   float64 // TL — leading between lines
-	hScale    float64 // Tz — horizontal scaling (percentage, default 100)
-	rise      float64 // Ts — text rise (superscript/subscript offset)
+	tm  Matrix // text matrix
+	tlm Matrix // text line matrix
 }
 
 // ── Stream parser ─────────────────────────────────────────────────────────────
@@ -179,6 +187,11 @@ type streamParser struct {
 	streamIdx int
 	btStream  int
 	inXObject bool
+
+	// res is the /Resources dict currently in scope. It starts as the page's
+	// and is replaced while inside a Form XObject that brings its own, so
+	// nested XObject names resolve against the right dictionary (§8.10.1).
+	res types.Dict
 }
 
 const maxFormXObjectDepth = 10 // prevent infinite recursion
@@ -203,20 +216,30 @@ func (p *streamParser) spanStream() int {
 }
 
 func newStreamParser(ctx *model.Context, fonts pageFonts, pageNum int) *streamParser {
-	return &streamParser{
+	p := &streamParser{
 		ctx:     ctx,
 		fonts:   fonts,
 		pageNum: pageNum,
 		gs: graphicsState{
-			ctm: Identity(),
+			ctm:    Identity(),
+			tfSize: 12,
+			hScale: 100, // Tz default is 100 percent (§9.3.4)
 		},
 		ts: textState{
-			tm:     Identity(),
-			tlm:    Identity(),
-			tfSize: 12,
-			hScale: 100,
+			tm:  Identity(),
+			tlm: Identity(),
 		},
 	}
+
+	// Seed the resource scope with the page's own /Resources.
+	if ctx != nil {
+		if pageDict, _, _, err := ctx.PageDict(pageNum, false); err == nil && pageDict != nil {
+			if resDict, err := resourceDict(ctx, pageDict); err == nil {
+				p.res = resDict
+			}
+		}
+	}
+	return p
 }
 
 // effectiveSize returns the rendered font size on the page.
@@ -227,7 +250,7 @@ func (p *streamParser) effectiveSize() float64 {
 	if tmScale <= 0 {
 		tmScale = 1
 	}
-	size := p.ts.tfSize * tmScale
+	size := p.gs.tfSize * tmScale
 
 	// Apply CTM scale to get page-space size
 	ctmScale := p.gs.ctm.ScaleX()
@@ -261,28 +284,50 @@ func (p *streamParser) textRotation() float64 {
 	return combined.Rotation()
 }
 
-// advanceTx moves the text position rightward by the given user-space width.
-// This is used after rendering a glyph string to update the text matrix.
-func (p *streamParser) advanceTx(userWidth float64) {
-	// In text space, horizontal advance is along the text matrix X axis.
-	// We apply horizontal scaling and add to the text matrix E component.
-	p.ts.tm.E += userWidth * (p.ts.hScale / 100.0)
+// originDistance returns how far the text origin has moved in page space since
+// it was at (fromX, fromY).
+func (p *streamParser) originDistance(fromX, fromY float64) float64 {
+	x, y := p.textOrigin()
+	return math.Hypot(x-fromX, y-fromY)
 }
 
-// glyphAdvance calculates the user-space advance width for a hex string.
-func (p *streamParser) glyphAdvance(hexRaw string, charCount int) float64 {
+// advanceText displaces the text matrix by tx in unscaled text space.
+//
+// §9.4.4 defines this as Tm' = Translate(tx, 0) × Tm. Adding tx straight to
+// Tm.E instead — as this used to — is only correct when Tm is axis-aligned and
+// unscaled; under rotation, skew or scale the position drifts with every glyph.
+func (p *streamParser) advanceText(tx float64) {
+	p.ts.tm = Translate(tx, 0).Multiply(p.ts.tm)
+}
+
+// glyphAdvance returns the text-space displacement for showing a string.
+//
+// §9.4.4: tx = ((w0 − Tj/1000) × Tfs + Tc + Tw) × Th
+//
+// The Tj term is handled separately by the TJ operator, so this covers the
+// glyph widths plus character and word spacing, all scaled by Tz.
+func (p *streamParser) glyphAdvance(hexRaw, text string) float64 {
 	fi := p.gs.curFont
-	if fi != nil && fi.isCID && hexRaw != "" {
-		w := stringWidth(hexRaw, fi)
-		return w * p.ts.tfSize / 1000.0
-	}
+	runes := []rune(text)
+
+	var w float64
 	if fi != nil && fi.widths != nil && hexRaw != "" {
-		// Non-CID font with widths
-		w := stringWidth(hexRaw, fi)
-		return w * p.ts.tfSize / 1000.0
+		w = stringWidth(hexRaw, fi) * p.gs.tfSize / 1000.0
+	} else {
+		// No resolvable metrics — estimate. See docs/pdf-spec.md on the
+		// standard-14 metrics gap.
+		w = float64(len(runes)) * p.gs.tfSize * 0.5
 	}
-	// Fallback: estimate based on average character width
-	return float64(charCount) * p.ts.tfSize * 0.5
+
+	// Tc applies to every glyph shown; Tw applies to the single-byte code 32
+	// only (§9.3.3), which for simple fonts is the space character. CID fonts
+	// almost never use a single-byte code 32, so word spacing is skipped there.
+	w += float64(len(runes)) * p.gs.charSpace
+	if fi == nil || !fi.isCID {
+		w += float64(strings.Count(text, " ")) * p.gs.wordSpace
+	}
+
+	return w * (p.gs.hScale / 100.0)
 }
 
 // ── Parsing ───────────────────────────────────────────────────────────────────
@@ -346,7 +391,7 @@ func (p *streamParser) parse(stream []byte, streamIdx int) {
 		case "Tf":
 			if len(operands) >= 2 {
 				p.gs.fontKey = strings.TrimPrefix(operands[len(operands)-2].value, "/")
-				p.ts.tfSize = parseFloat(operands[len(operands)-1].value)
+				p.gs.tfSize = parseFloat(operands[len(operands)-1].value)
 				if p.fonts != nil {
 					p.gs.curFont = p.fonts[p.gs.fontKey]
 				}
@@ -354,30 +399,30 @@ func (p *streamParser) parse(stream []byte, streamIdx int) {
 
 		case "Tc": // character spacing
 			if len(operands) >= 1 {
-				p.ts.charSpace = parseFloat(operands[0].value)
+				p.gs.charSpace = parseFloat(operands[0].value)
 			}
 
 		case "Tw": // word spacing
 			if len(operands) >= 1 {
-				p.ts.wordSpace = parseFloat(operands[0].value)
+				p.gs.wordSpace = parseFloat(operands[0].value)
 			}
 
 		case "TL": // leading
 			if len(operands) >= 1 {
-				p.ts.leading = parseFloat(operands[0].value)
+				p.gs.leading = parseFloat(operands[0].value)
 			}
 
 		case "Tz": // horizontal scaling
 			if len(operands) >= 1 {
-				p.ts.hScale = parseFloat(operands[0].value)
-				if p.ts.hScale == 0 {
-					p.ts.hScale = 100
+				p.gs.hScale = parseFloat(operands[0].value)
+				if p.gs.hScale == 0 {
+					p.gs.hScale = 100
 				}
 			}
 
 		case "Ts": // text rise
 			if len(operands) >= 1 {
-				p.ts.rise = parseFloat(operands[0].value)
+				p.gs.rise = parseFloat(operands[0].value)
 			}
 
 		case "Tr": // text rendering mode
@@ -416,14 +461,14 @@ func (p *streamParser) parse(stream []byte, streamIdx int) {
 			if len(operands) >= 2 {
 				tx := parseFloat(operands[len(operands)-2].value)
 				ty := parseFloat(operands[len(operands)-1].value)
-				p.ts.leading = -ty
+				p.gs.leading = -ty
 				t := Translate(tx, ty)
 				p.ts.tlm = t.Multiply(p.ts.tlm)
 				p.ts.tm = p.ts.tlm
 			}
 
 		case "T*":
-			t := Translate(0, -p.ts.leading)
+			t := Translate(0, -p.gs.leading)
 			p.ts.tlm = t.Multiply(p.ts.tlm)
 			p.ts.tm = p.ts.tlm
 
@@ -440,7 +485,7 @@ func (p *streamParser) parse(stream []byte, streamIdx int) {
 
 		case "'":
 			// Move to next line, then show string
-			t := Translate(0, -p.ts.leading)
+			t := Translate(0, -p.gs.leading)
 			p.ts.tlm = t.Multiply(p.ts.tlm)
 			p.ts.tm = p.ts.tlm
 			if p.inBT && len(operands) >= 1 {
@@ -450,9 +495,9 @@ func (p *streamParser) parse(stream []byte, streamIdx int) {
 		case `"`:
 			// Set word spacing, char spacing, move to next line, show string
 			if p.inBT && len(operands) >= 3 {
-				p.ts.wordSpace = parseFloat(operands[len(operands)-3].value)
-				p.ts.charSpace = parseFloat(operands[len(operands)-2].value)
-				t := Translate(0, -p.ts.leading)
+				p.gs.wordSpace = parseFloat(operands[len(operands)-3].value)
+				p.gs.charSpace = parseFloat(operands[len(operands)-2].value)
+				t := Translate(0, -p.gs.leading)
 				p.ts.tlm = t.Multiply(p.ts.tlm)
 				p.ts.tm = p.ts.tlm
 				p.showString(operands[len(operands)-1], streamIdx)
@@ -479,21 +524,13 @@ func (p *streamParser) showString(tok token, streamIdx int) {
 	rot := p.textRotation()
 	fsize := p.effectiveSize()
 
-	// Advance text position and compute width
-	advance := p.glyphAdvance(hexRaw, len([]rune(text)))
-	p.advanceTx(advance)
+	p.advanceText(p.glyphAdvance(hexRaw, text))
 
-	// Width in page space: advance is in text space (uses tfSize),
-	// must apply text matrix scale AND CTM scale to get page points.
-	tmScaleX := p.ts.tm.ScaleX()
-	if tmScaleX <= 0 {
-		tmScaleX = 1
-	}
-	ctmScaleX := p.gs.ctm.ScaleX()
-	if ctmScaleX <= 0 {
-		ctmScaleX = 1
-	}
-	pageWidth := advance * (p.ts.hScale / 100.0) * tmScaleX * ctmScaleX
+	// Width is the distance the origin actually travelled in page space. Taking
+	// it from the transformed positions rather than rescaling the text-space
+	// advance by hand keeps Tz, the text matrix and the CTM applied exactly
+	// once each, and stays correct under rotation and skew.
+	pageWidth := p.originDistance(px, py)
 
 	p.spans = append(p.spans, TextSpan{
 		Text:        text,
@@ -510,7 +547,7 @@ func (p *streamParser) showString(tok token, streamIdx int) {
 		OpEnd:       tok.end,
 		// Block fields (BlockEnd filled in at ET)
 		BlockStart: p.btStart,
-		TfSize:     p.ts.tfSize,
+		TfSize:     p.gs.tfSize,
 		TmA:        p.blockTm.A, TmB: p.blockTm.B,
 		TmC: p.blockTm.C, TmD: p.blockTm.D,
 		TmE: p.blockTm.E, TmF: p.blockTm.F,
@@ -526,9 +563,6 @@ func (p *streamParser) showTJArray(operands []token, streamIdx int) {
 	rot := p.textRotation()
 	fsize := p.effectiveSize()
 
-	// Track starting text matrix E to compute total advance
-	startTmE := p.ts.tm.E
-
 	for _, op := range operands {
 		switch op.kind {
 		case tokString, tokHexString:
@@ -538,43 +572,25 @@ func (p *streamParser) showTJArray(operands []token, streamIdx int) {
 				firstStart = op.start
 			}
 			lastEnd = op.end
-
-			// Advance text position by glyph width
-			advance := p.glyphAdvance(hexRaw, len([]rune(text)))
-			p.advanceTx(advance)
+			p.advanceText(p.glyphAdvance(hexRaw, text))
 
 		case tokNumber:
-			// TJ displacement: positive = move left, negative = move right
-			// Large displacements indicate word breaks
+			// TJ displacement: positive moves left, negative moves right.
+			// A large one is a word break the encoder expressed as kerning
+			// rather than a space glyph.
 			kern := parseFloat(op.value)
 			if kern < -200 || kern > 200 {
 				sb.WriteByte(' ')
 			}
-			// TJ displacement in thousandths of a unit of text space
-			displacement := -kern / 1000.0 * p.ts.tfSize
-			p.advanceTx(displacement)
+			// §9.4.3: the number is in thousandths of a text-space unit,
+			// subtracted from the position and scaled by Tz.
+			p.advanceText(-kern / 1000.0 * p.gs.tfSize * (p.gs.hScale / 100.0))
 		}
 	}
 
 	fullText := sb.String()
 	if fullText != "" && firstStart >= 0 {
-		// Total text-space advance
-		totalAdvance := p.ts.tm.E - startTmE
-
-		// Width in page space: totalAdvance is in text space,
-		// apply text matrix scale AND CTM scale
-		tmScaleX := p.ts.tm.ScaleX()
-		if tmScaleX <= 0 {
-			tmScaleX = 1
-		}
-		ctmScaleX := p.gs.ctm.ScaleX()
-		if ctmScaleX <= 0 {
-			ctmScaleX = 1
-		}
-		pageWidth := totalAdvance * tmScaleX * ctmScaleX
-		if pageWidth < 0 {
-			pageWidth = -pageWidth
-		}
+		pageWidth := p.originDistance(px, py)
 
 		p.spans = append(p.spans, TextSpan{
 			Text:        fullText,
@@ -590,7 +606,7 @@ func (p *streamParser) showTJArray(operands []token, streamIdx int) {
 			OpStart:     firstStart,
 			OpEnd:       lastEnd,
 			BlockStart:  p.btStart,
-			TfSize:      p.ts.tfSize,
+			TfSize:      p.gs.tfSize,
 			TmA:         p.blockTm.A, TmB: p.blockTm.B,
 			TmC: p.blockTm.C, TmD: p.blockTm.D,
 			TmE: p.blockTm.E, TmF: p.blockTm.F,
@@ -674,12 +690,16 @@ func (p *streamParser) handleFormXObject(name string) {
 		return
 	}
 
-	// Get the Form XObject's own font resources (if any)
-	formFonts := p.fonts // inherit page fonts
+	// Get the Form XObject's own resources (if any). A form that brings its
+	// own /Resources shadows the enclosing scope for both fonts and nested
+	// XObjects; one that does not inherits (§8.10.1).
+	formFonts := p.fonts // inherit enclosing fonts
+	formRes := p.res     // inherit enclosing resources
 	resObj, found := xobjDict.Find("Resources")
 	if found {
 		resDict, err := p.ctx.DereferenceDict(resObj)
 		if err == nil && resDict != nil {
+			formRes = resDict
 			fontObj, fontFound := resDict.Find("Font")
 			if fontFound {
 				fontDict, err := p.ctx.DereferenceDict(fontObj)
@@ -732,9 +752,11 @@ func (p *streamParser) handleFormXObject(name string) {
 	savedStreamIdx := p.streamIdx
 	savedBTStream := p.btStream
 	savedInXObject := p.inXObject
+	savedRes := p.res
 
 	p.gs.ctm = formMatrix.Multiply(p.gs.ctm)
 	p.fonts = formFonts
+	p.res = formRes
 	p.inBT = false
 	p.inXObject = true
 	p.depth++
@@ -749,24 +771,15 @@ func (p *streamParser) handleFormXObject(name string) {
 	p.streamIdx = savedStreamIdx
 	p.btStream = savedBTStream
 	p.inXObject = savedInXObject
+	p.res = savedRes
 }
 
 func (p *streamParser) lookupXObject(name string) types.Object {
-	if p.ctx == nil {
+	if p.ctx == nil || p.res == nil {
 		return nil
 	}
 
-	pageDict, _, _, err := p.ctx.PageDict(p.pageNum, false)
-	if err != nil {
-		return nil
-	}
-
-	resDict, err := resourceDict(p.ctx, pageDict)
-	if err != nil || resDict == nil {
-		return nil
-	}
-
-	xobjObj, found := resDict.Find("XObject")
+	xobjObj, found := p.res.Find("XObject")
 	if !found {
 		return nil
 	}

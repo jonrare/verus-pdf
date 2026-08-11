@@ -272,23 +272,10 @@ func FormXObjectPage(t *testing.T, name, pageContent, formContent string) string
 		"Font": types.Dict(map[string]types.Object{"F1": *fontRef}),
 	})
 
-	// The Form XObject: a stream dict with Subtype /Form, its own resources
-	// and a bounding box.
-	formSD, err := xref.NewStreamDictForBuf([]byte(formContent))
-	if err != nil {
-		t.Fatalf("form stream: %v", err)
-	}
-	formSD.Dict["Type"] = types.Name("XObject")
-	formSD.Dict["Subtype"] = types.Name("Form")
-	formSD.Dict["BBox"] = types.NewNumberArray(0, 0, 612, 792)
-	formSD.Dict["Resources"] = fontRes
-	if err := formSD.Encode(); err != nil {
-		t.Fatalf("encode form stream: %v", err)
-	}
-	formRef, err := xref.IndRefForNewObject(*formSD)
-	if err != nil {
-		t.Fatalf("form object: %v", err)
-	}
+	// The form carries a translation matrix so tests can tell whether it was
+	// applied to the content drawn inside (§8.10.1).
+	formRef := formXObject(t, xref, formContent, fontRes,
+		types.NewNumberArray(1, 0, 0, 1, FormMatrixDX, FormMatrixDY))
 
 	contentSD, err := xref.NewStreamDictForBuf([]byte(pageContent))
 	if err != nil {
@@ -317,6 +304,104 @@ func FormXObjectPage(t *testing.T, name, pageContent, formContent string) string
 		"Resources": types.Dict(map[string]types.Object{
 			"Font":    types.Dict(map[string]types.Object{"F1": *fontRef}),
 			"XObject": types.Dict(map[string]types.Object{"X1": *formRef}),
+		}),
+	}))
+	if err != nil {
+		t.Fatalf("page object: %v", err)
+	}
+
+	finalisePages(t, xref, pagesRef, types.Array{*pageRef})
+	return Write(t, xref, name)
+}
+
+// FormMatrixDX and FormMatrixDY are the translation FormXObjectPage gives its
+// form, so tests can assert the matrix was applied.
+const (
+	FormMatrixDX = 100
+	FormMatrixDY = 50
+)
+
+// formXObject registers a Form XObject stream and returns its reference.
+// ISO 32000-1:2008, §8.10.1.
+func formXObject(t *testing.T, xref *model.XRefTable, content string, resources types.Dict, matrix types.Array) *types.IndirectRef {
+	t.Helper()
+
+	sd, err := xref.NewStreamDictForBuf([]byte(content))
+	if err != nil {
+		t.Fatalf("form stream: %v", err)
+	}
+	sd.Dict["Type"] = types.Name("XObject")
+	sd.Dict["Subtype"] = types.Name("Form")
+	sd.Dict["BBox"] = types.NewNumberArray(0, 0, 612, 792)
+	sd.Dict["Resources"] = resources
+	if matrix != nil {
+		sd.Dict["Matrix"] = matrix
+	}
+	if err := sd.Encode(); err != nil {
+		t.Fatalf("encode form stream: %v", err)
+	}
+	ref, err := xref.IndRefForNewObject(*sd)
+	if err != nil {
+		t.Fatalf("form object: %v", err)
+	}
+	return ref
+}
+
+// NestedFormXObjectPage builds a page that invokes Form XObject /X1, which in
+// turn invokes /Inner — a name present only in /X1's own /Resources.
+//
+// Resolving XObject names against the page's resources instead of the enclosing
+// form's makes the inner form silently vanish, which is exactly what this
+// fixture exists to catch. ISO 32000-1:2008, §8.10.1.
+func NestedFormXObjectPage(t *testing.T, name, pageContent, outerContent, innerContent string) string {
+	t.Helper()
+
+	xref, err := pdfcpupkg.CreateXRefTableWithRootDict()
+	if err != nil {
+		t.Fatalf("CreateXRefTableWithRootDict: %v", err)
+	}
+
+	fontRef := helveticaFont(t, xref)
+	fontRes := types.Dict(map[string]types.Object{
+		"Font": types.Dict(map[string]types.Object{"F1": *fontRef}),
+	})
+
+	innerRef := formXObject(t, xref, innerContent, fontRes, nil)
+
+	// The outer form's resources name the inner form. The page never does.
+	outerRes := types.Dict(map[string]types.Object{
+		"Font":    types.Dict(map[string]types.Object{"F1": *fontRef}),
+		"XObject": types.Dict(map[string]types.Object{"Inner": *innerRef}),
+	})
+	outerRef := formXObject(t, xref, outerContent, outerRes, nil)
+
+	contentSD, err := xref.NewStreamDictForBuf([]byte(pageContent))
+	if err != nil {
+		t.Fatalf("content stream: %v", err)
+	}
+	if err := contentSD.Encode(); err != nil {
+		t.Fatalf("encode content stream: %v", err)
+	}
+	contentRef, err := xref.IndRefForNewObject(*contentSD)
+	if err != nil {
+		t.Fatalf("content object: %v", err)
+	}
+
+	pagesRef, err := xref.IndRefForNewObject(types.Dict(map[string]types.Object{
+		"Type": types.Name("Pages"),
+	}))
+	if err != nil {
+		t.Fatalf("pages object: %v", err)
+	}
+
+	pageRef, err := xref.IndRefForNewObject(types.Dict(map[string]types.Object{
+		"Type":     types.Name("Page"),
+		"Parent":   *pagesRef,
+		"MediaBox": types.NewNumberArray(0, 0, 612, 792),
+		"Contents": *contentRef,
+		"Resources": types.Dict(map[string]types.Object{
+			"Font":    types.Dict(map[string]types.Object{"F1": *fontRef}),
+			"XObject": types.Dict(map[string]types.Object{"X1": *outerRef}),
 		}),
 	}))
 	if err != nil {
