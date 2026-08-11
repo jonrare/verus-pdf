@@ -85,7 +85,9 @@ asset server (`backend/viewer/fileserver.go`) rather than receiving it as base64
 over the Wails bridge. The handler serves by opaque token, so filesystem paths
 stay out of URLs and only files the app explicitly granted can be read. Range
 requests are supported, so pdf.js renders the first page without waiting for the
-whole file.
+whole file. The webview origin, header forwarding and range behaviour all differ
+per platform — see **[docs/asset-server.md](docs/asset-server.md)**, which also
+explains why the Linux build needs `-tags webkit2_41`.
 
 **Edits go to per-session working files.** Each operation writes a fresh file in
 a private `0700` directory, keeping a bounded window so undo has something to

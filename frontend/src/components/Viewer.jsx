@@ -213,7 +213,15 @@ export default function Viewer({ isEditMode = false }) {
         // Fetch the document from the asset server rather than receiving it as
         // base64 over the bridge. pdf.js streams it with range requests, so
         // rendering starts without waiting for the whole file.
-        const url = await FileURL(document.path)
+        //
+        // Resolve to an absolute URL against the page. pdf.js picks its
+        // transport with `new URL(url)` and no base, so a relative path throws
+        // there and always falls back to XHR; an absolute one lets it use the
+        // fetch transport on Windows, where the webview origin is
+        // http://wails.localhost. On macOS and Linux the origin is wails://,
+        // which is not http(s), so XHR is used either way — that works too.
+        // See docs/asset-server.md.
+        const url = new URL(await FileURL(document.path), window.document.baseURI).href
         if (cancelled) return
         const pdf = await pdfjsLib.getDocument({ url }).promise
         if (cancelled) { pdf.destroy(); return }

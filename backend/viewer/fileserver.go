@@ -104,8 +104,19 @@ func (s *Service) FileHandler() http.Handler {
 		// a stale document.
 		w.Header().Set("Cache-Control", "no-store")
 
+		// Drop conditional headers so ServeContent can only ever answer 200 or
+		// 206. It would otherwise answer 304 to a conditional request, and the
+		// legacy WebKitGTK path (a Linux build without the webkit2_41 tag)
+		// rejects every status other than 200 outright — turning a harmless
+		// cache revalidation into a failed load. Revalidation is meaningless
+		// here anyway: responses are no-store.
+		r.Header.Del("If-Modified-Since")
+		r.Header.Del("If-None-Match")
+		r.Header.Del("If-Range")
+
 		// ServeContent handles range requests, which is what lets pdf.js render
-		// the first page before the whole file has arrived.
+		// the first page before the whole file has arrived. See
+		// docs/asset-server.md for what each platform actually forwards.
 		http.ServeContent(w, r, info.Name(), info.ModTime(), f)
 	})
 }
