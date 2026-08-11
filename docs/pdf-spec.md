@@ -109,7 +109,6 @@ These are real gaps, not design choices — treat them as a work list.
 |---|---|---|
 | Block rewriting | A rebuilt `BT`…`ET` block preserves the other runs it contained and everything set before the first text operand, but operators appearing *between* runs — a colour change partway through a block — are still lost. | §9.4 |
 | Font metrics | The standard 14 fonts carry no `/Widths` array, and no built-in metrics are compiled in, so their glyph advances are estimated at 0.5 em per character. See below — this is the highest-value gap. | §9.6.2.2 |
-| Block rewriting (runs) | Operators appearing *between* runs in a rebuilt block — a colour change partway through — are still lost. | §9.4 |
 | Simple font encoding | Replacement text is narrowed to one byte per rune rather than reverse-mapped through the font's encoding table, so characters that exist in WinAnsi above U+00FF (smart quotes, en dash, €) cannot be typed. | §9.6.6 |
 
 ### Fixed, with regression tests
