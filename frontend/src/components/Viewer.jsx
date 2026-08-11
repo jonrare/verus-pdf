@@ -16,8 +16,8 @@ const DRAG_THRESHOLD = 4
 const SAME_LINE_EM       = 0.4
 const SPACE_GAP_EM       = 0.15
 const MAX_GAP_EM         = 2.0
-const ASSUMED_GLYPH_EM   = 0.62
-const SPACE_ADVANCE_RATIO = 1.35
+const IMPLAUSIBLE_GLYPH_EM = 1.2
+const SPACE_ADVANCE_RATIO  = 1.35
 
 // Decide whether `next` continues `cur` on the same line, and whether a space
 // belongs between them. Mutates `run` with the advance it observed.
@@ -34,11 +34,17 @@ function spanGap(cur, next, run) {
     return { adjacent: true, needsSpace: gap > size * SPACE_GAP_EM }
   }
 
+  // This cannot reliably find word spaces, and no threshold can — with
+  // per-character spans a narrow glyph plus a space can advance less than a
+  // wide glyph alone. It errs toward keeping words intact and only claims a
+  // space when the advance is too wide to be a single glyph. See
+  // docs/pdf-spec.md.
   let advance = next.x - run.prevX
   if (run.prevChars > 1) advance /= run.prevChars
   if (advance <= -size * 0.5 || advance >= size * (1 + MAX_GAP_EM)) return { adjacent: false }
 
-  const threshold = Math.max(size * ASSUMED_GLYPH_EM, run.maxAdv * SPACE_ADVANCE_RATIO)
+  let threshold = size * IMPLAUSIBLE_GLYPH_EM
+  if (run.maxAdv > 0) threshold = Math.min(threshold, run.maxAdv * SPACE_ADVANCE_RATIO)
   const needsSpace = advance > threshold
   // Only glyph advances (not word gaps) inform the baseline.
   if (!needsSpace && advance > run.maxAdv) run.maxAdv = advance

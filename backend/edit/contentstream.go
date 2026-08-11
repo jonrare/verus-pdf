@@ -23,6 +23,7 @@ package edit
 
 import (
 	"bytes"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"math"
@@ -579,7 +580,12 @@ func (p *streamParser) decodeToken(tok token) (string, string) {
 		}
 	}
 
-	// Standard encoding for non-CID fonts
+	// Standard encoding for non-CID fonts.
+	//
+	// The second return value feeds stringWidth, which indexes the font's
+	// width table by character code — so it must carry the *raw* bytes, hex
+	// encoded, not the decoded Unicode. Returning "" here silently defeats
+	// every /Widths lookup and falls back to the 0.5 em estimate.
 	if fi != nil && !fi.isCID && fi.encoding != nil {
 		var sb strings.Builder
 		for _, b := range []byte(tok.value) {
@@ -589,10 +595,10 @@ func (p *streamParser) decodeToken(tok token) (string, string) {
 			}
 			sb.WriteRune(r)
 		}
-		return sb.String(), ""
+		return sb.String(), hex.EncodeToString([]byte(tok.value))
 	}
 
-	return decodeString(tok.value, tokString), ""
+	return decodeString(tok.value, tokString), hex.EncodeToString([]byte(tok.value))
 }
 
 // ── Form XObject handling ─────────────────────────────────────────────────────
@@ -826,9 +832,10 @@ const (
 	spaceGapEm = 0.15
 	// Gaps wider than this are column or cell breaks, not word breaks.
 	maxGapEm = 2.0
-	// Fallback per-glyph advance assumed before the run has any history.
-	// Sits between typical lowercase (~0.55 em) and uppercase (~0.68 em).
-	assumedGlyphEm = 0.62
+	// An advance beyond this cannot be a single glyph in a proportional face
+	// (the widest standard glyphs reach about 1.0 em), so it must contain a
+	// space. Used for the first step of a run, where there is no history yet.
+	implausibleGlyphEm = 1.2
 	// How much wider than the run's widest glyph an advance must be before it
 	// is read as containing a space.
 	spaceAdvanceRatio = 1.35
@@ -927,6 +934,17 @@ func spanGap(current, next TextSpan, run *runState) (needsSpace, adjacent bool) 
 	}
 
 	// Unknown width — measure what the previous glyph run actually consumed.
+	//
+	// This cannot reliably find word spaces, and no threshold can. With
+	// per-character spans in 12pt Helvetica, "Hi there" advances 6.000 from
+	// 'i' to 't' *including* the space, but 6.672 from 'h' to 'e' with no
+	// space at all: the step containing a space is the smaller of the two.
+	// Narrow glyphs plus a space simply overlap wide glyphs alone.
+	//
+	// So this errs toward keeping words intact — a missing space is easier to
+	// read past than a shattered word — and only claims a space when the
+	// advance is too large to be a single glyph. The real fix is to stop
+	// landing here: see docs/pdf-spec.md on standard-14 font metrics.
 	advance := next.X - run.prevX
 	if run.prevRunes > 1 {
 		advance /= float64(run.prevRunes)
@@ -935,9 +953,11 @@ func spanGap(current, next TextSpan, run *runState) (needsSpace, adjacent bool) 
 		return false, false
 	}
 
-	threshold := size * assumedGlyphEm
-	if run.maxAdv*spaceAdvanceRatio > threshold {
-		threshold = run.maxAdv * spaceAdvanceRatio
+	// With no history, the only defensible claim is that an advance wider than
+	// any single glyph must contain a space.
+	threshold := size * implausibleGlyphEm
+	if run.maxAdv > 0 {
+		threshold = math.Min(threshold, run.maxAdv*spaceAdvanceRatio)
 	}
 	needsSpace = advance > threshold
 
@@ -1014,6 +1034,13 @@ func tokenise(src []byte) []token {
 						buf.WriteByte(')')
 					case '\\':
 						buf.WriteByte('\\')
+					case '\n':
+						// Line continuation — emits nothing (§7.3.4.2)
+					case '\r':
+						// CR or CRLF continuation — emits nothing (§7.3.4.2)
+						if i+1 < n && src[i+1] == '\n' {
+							i++
+						}
 					default:
 						if src[i] >= '0' && src[i] <= '7' {
 							octal := string(src[i])

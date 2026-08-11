@@ -15,6 +15,7 @@ package forms
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -276,8 +277,8 @@ func (s *Service) FillFormFields(inputPath, outputPath string, values map[string
 			if !matched {
 				continue
 			}
-			// Set value
-			annotDict["V"] = types.StringLiteral(newVal)
+			// Set value — ft is the field type resolved above (§12.7.4.2)
+			annotDict["V"] = fieldValue(ft, newVal)
 			delete(annotDict, "AP")
 			if ir, ok := annotRef.(types.IndirectRef); ok {
 				objNr := ir.ObjectNumber.Value()
@@ -666,8 +667,8 @@ func fillField(ctx *model.Context, obj types.Object, parentName string, values m
 		return 0
 	}
 
-	// Set /V
-	fieldDict["V"] = types.StringLiteral(newVal)
+	// Set /V — button fields need a name object, not a string (§12.7.4.2)
+	fieldDict["V"] = fieldValue(inheritedName(ctx, fieldDict, "FT"), newVal)
 
 	// Remove /AP (appearance stream) so viewers regenerate it
 	delete(fieldDict, "AP")
@@ -789,6 +790,11 @@ func getRect(ctx *model.Context, d types.Dict) []float64 {
 	return r
 }
 
+// stringVal decodes a PDF text string to Go text.
+//
+// Text strings may be PDFDocEncoded or UTF-16BE with a BOM, and literal
+// strings carry backslash escapes — so the raw bytes are never the value.
+// ISO 32000-1:2008, §7.9.2.2.
 func stringVal(ctx *model.Context, obj types.Object) string {
 	deref, err := ctx.Dereference(obj)
 	if err != nil {
@@ -796,9 +802,17 @@ func stringVal(ctx *model.Context, obj types.Object) string {
 	}
 	switch v := deref.(type) {
 	case types.StringLiteral:
-		return string(v)
+		s, err := types.StringLiteralToString(v)
+		if err != nil {
+			return ""
+		}
+		return s
 	case types.HexLiteral:
-		return string(v)
+		s, err := types.HexLiteralToString(v)
+		if err != nil {
+			return ""
+		}
+		return s
 	case types.Name:
 		return v.Value()
 	}
@@ -861,12 +875,16 @@ func parseDAFontSize(ctx *model.Context, d types.Dict) float64 {
 		return 0
 	}
 
-	da := stringVal(ctx, daObj)
-	if da == "" {
-		return 0
-	}
+	return daFontSize(stringVal(ctx, daObj))
+}
 
-	// Find "Tf" and extract the number before it
+// daFontSize extracts the point size from a /DA appearance string.
+//
+// The string holds content-stream operators; the size is the operand before
+// the Tf operator. A size of 0 means auto-size to the field, so it is reported
+// as 0 rather than treated as a real measurement.
+// ISO 32000-1:2008, §12.7.3.3.
+func daFontSize(da string) float64 {
 	parts := strings.Fields(da)
 	for i, part := range parts {
 		if part == "Tf" && i >= 1 {
@@ -877,6 +895,23 @@ func parseDAFontSize(ctx *model.Context, d types.Dict) float64 {
 		}
 	}
 	return 0
+}
+
+// fieldValue builds the /V object for a field of the given type.
+//
+// Button fields (checkboxes and radio buttons) take a name object matching one
+// of the appearance states in /AP/N — writing a string there leaves the widget
+// rendering as off. Every other field type takes a text string.
+// ISO 32000-1:2008, §12.7.4.2.
+func fieldValue(fieldType, value string) types.Object {
+	if fieldType == "Btn" {
+		return types.Name(value)
+	}
+	escaped, err := types.Escape(value)
+	if err != nil || escaped == nil {
+		return types.StringLiteral(value)
+	}
+	return types.StringLiteral(*escaped)
 }
 
 // findCheckboxOnValue extracts the "on" appearance name from /AP/N.
@@ -899,11 +934,18 @@ func findCheckboxOnValue(ctx *model.Context, d types.Dict) string {
 	if err != nil || nDict == nil {
 		return ""
 	}
-	// Find the key that isn't "Off"
+	// Find the key that isn't "Off". Sort first: Go map iteration order is
+	// randomised, and a widget with more than two appearance states would
+	// otherwise report a different "on" value from run to run.
+	keys := make([]string, 0, len(nDict))
 	for key := range nDict {
 		if key != "Off" {
-			return key
+			keys = append(keys, key)
 		}
 	}
-	return ""
+	if len(keys) == 0 {
+		return ""
+	}
+	sort.Strings(keys)
+	return keys[0]
 }

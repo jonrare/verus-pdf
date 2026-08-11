@@ -85,6 +85,20 @@ explicitly: `// ISO 32000-2:2020, §7.6.4.3 — AES-256 is 2.0 only`.
 | `backend/bookmarks/bookmarks.go` | Document outline hierarchy | §12.3.3 |
 | `backend/optimize/optimize.go` | Object streams, cross-reference streams | §7.5.7, §7.5.8 |
 | `backend/viewer/viewer.go` | Trailer `/Encrypt` detection, document info dictionary | §7.5.5 (trailer), §14.3.3 (document info) |
+| `backend/internal/pdftest` | Test-only fixture builder: spec-valid PDFs with real Helvetica metrics | §9.6.2.1 (`/Widths`), Table 122 (font descriptors) |
+
+## Testing
+
+`backend/internal/pdftest` builds genuine, parseable PDFs on disk rather than
+checked-in fixture blobs, so tests exercise the same pdfcpu read path the
+application uses. Its `Pages` helper writes content streams verbatim, which
+means a test can assert reported byte offsets against the exact bytes it
+supplied.
+
+The fixture font is deliberately spec-complete — real `/Widths`, a real font
+descriptor — so it passes strict validation and the decoder resolves true glyph
+advances. Tests that need the *unknown*-width code paths should call
+`mergeAdjacentSpans` directly rather than going through a fixture.
 
 ## Known deviations
 
@@ -93,15 +107,55 @@ These are real gaps, not design choices — treat them as a work list.
 
 | Area | Deviation | Clause |
 |---|---|---|
+| Content streams | Byte offsets are computed against the *concatenation* of a page's `/Contents` array but applied to individual streams, so pages with multiple content streams splice at the wrong location. Spans found inside a Form XObject have the same problem: they carry offsets into the form's stream but are tagged `StreamIndex 0`. | §7.8.2 |
+| Block rewriting | `EditMergedSpans` replaces a whole `BT`…`ET` block with only the edited span's glyphs, discarding any other text in that block along with its `Tc`/`Tw`/`Tz`/`Tr` and colour operators. | §9.4 |
 | Graphics state | `q`/`Q` save and restore the font *name* but not the text state (`Tf` size, `Tc`, `Tw`, `TL`, `Tz`, `Ts`). The spec makes all of these part of the graphics state, so after a `Q` the font and its size can disagree. | §8.4.1 |
 | Text advance | `advanceTx` adds directly to `Tm.E`, ignoring the matrix's rotation and skew, and ignores `Tc`/`Tw`. Rotated or letter-spaced text drifts. | §9.4.4 |
 | Horizontal scaling | `Tz` is applied twice to the reported width in `showString` but once in `showTJArray`. | §9.3.4 |
 | Form XObjects | Nested XObject names are resolved against the *page's* `/Resources` rather than the enclosing form's, so nested forms lose their content. Fonts are inherited correctly. | §8.10.1 |
-| Literal strings | The tokeniser emits a newline for a backslash-newline line continuation; it should emit nothing. | §7.3.4.2 |
-| Content streams | Byte offsets are computed against the *concatenation* of a page's `/Contents` array but applied to individual streams, so pages with multiple content streams splice at the wrong location. | §7.8.2 |
-| String encoding | Replacement text is written as UTF-8 bytes into literal strings that the font decodes as WinAnsi/Standard, so non-ASCII characters become mojibake. | §7.9.2.2 |
-| Button fields | `/V` for checkbox and radio fields is written as a string; the spec requires a name object. | §12.7.4.2 |
-| Text strings | `HexLiteral` field values are returned as raw hex rather than decoded, so UTF-16BE values surface as `FEFF...`. | §7.9.2.2 |
+| Font metrics | The standard 14 fonts carry no `/Widths` array, and no built-in metrics are compiled in, so their glyph advances are estimated at 0.5 em per character. See below — this is the highest-value gap. | §9.6.2.2 |
+| Simple font encoding | Replacement text is narrowed to one byte per rune rather than reverse-mapped through the font's encoding table, so characters that exist in WinAnsi above U+00FF (smart quotes, en dash, €) cannot be typed. | §9.6.6 |
+
+### Fixed, with regression tests
+
+Recorded so the tests that pin them are easy to find.
+
+| Area | Was | Clause |
+|---|---|---|
+| Glyph widths | `decodeToken` returned an empty raw string for simple fonts, so `stringWidth` never ran and every `/Widths` array was ignored — all widths silently fell back to the 0.5 em estimate. `TestExtractText_WidthUsesFontMetrics` | §9.2.4 |
+| String encoding | Replacement text was written as Go's UTF-8 bytes into literal strings the font decodes as WinAnsi, so `é` became `Ã©`. `TestEscapePDFString_NonASCIIIsSingleByte` | §9.6.6 |
+| Truncation | Replacement text was escaped and *then* cut to length, so a cut could land between a backslash and the character it escapes. `TestBuildLiteralReplacement_TruncationNeverSplitsEscape` | §7.3.4.2 |
+| Literal strings | The tokeniser emitted a newline for a backslash-newline line continuation. `TestTokenise_LineContinuationEmitsNothing` | §7.3.4.2 |
+| Button fields | `/V` for checkbox and radio fields was written as a string, leaving widgets rendering as off. `TestFieldValue_ButtonsGetNameObjects` | §12.7.4.2 |
+| Text strings | Hex-literal field values were returned as raw hex, so UTF-16BE values surfaced as `FEFF…`. | §7.9.2.2 |
+
+### The standard-14 metrics gap
+
+This one deserves calling out because it silently degrades several features at
+once. Helvetica, Times, Courier, Symbol and ZapfDingbats may legally omit
+`/Widths` (§9.6.2.2), and viewers are expected to know their metrics. This
+codebase does not, so for those fonts — a large share of real documents —
+`glyphAdvance` falls back to `charCount × fontSize × 0.5`.
+
+Downstream, that estimate is why:
+
+- overlay boxes in edit mode sit slightly wrong,
+- `mergeAdjacentSpans` cannot recover word spaces (see below),
+- rewritten `BT`/`ET` blocks reposition glyphs imprecisely.
+
+Compiling in the AFM tables for the standard 14 would close all three at once.
+`backend/internal/pdftest` already carries the Helvetica table as a starting
+point.
+
+**Word spaces are unrecoverable without real widths.** Not merely hard —
+undecidable from geometry. With per-character spans in 12pt Helvetica,
+`"Hi there"` advances 6.000 points from `i` to `t` *including the space*, but
+6.672 from `h` to `e` with no space at all. The step containing a space is the
+smaller of the two, because a narrow glyph plus a space is narrower than a wide
+glyph alone. No threshold separates them. `mergeAdjacentSpans` therefore errs
+toward keeping words intact and only claims a space when an advance is too wide
+to be any single glyph; `TestMerge_UnknownWidths_SpaceRecoveryIsNotPossible`
+documents the limit.
 
 ## Practical notes
 

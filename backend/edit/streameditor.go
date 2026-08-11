@@ -81,12 +81,13 @@ func (s *Service) ReplaceSpanText(
 	var truncated, padded bool
 
 	if isHex {
-		origByteLen := (opEnd - opStart - 2) / 2
-		replacement, actualText, truncated, padded = buildHexReplacement(newText, origByteLen)
+		// Two hex digits per byte, minus the enclosing < >.
+		origLen := (opEnd - opStart - 2) / 2
+		replacement, actualText, truncated, padded = buildHexReplacement(newText, origLen)
 	} else {
-		origInner    := unescapePDFLiteral(string(original[1 : len(original)-1]))
+		origInner := unescapePDFLiteral(string(original[1 : len(original)-1]))
 		replacement, actualText, truncated, padded = buildLiteralReplacement(
-			escapePDFString(newText), newText, len(origInner))
+			newText, len([]rune(origInner)))
 	}
 
 	modified := make([]byte, 0, len(stream))
@@ -201,52 +202,75 @@ func writeStreamBack(ctx *model.Context, ir types.IndirectRef, content []byte) e
 
 // ── String helpers ────────────────────────────────────────────────────────────
 
-func buildLiteralReplacement(escaped, original string, origByteLen int) ([]byte, string, bool, bool) {
-	raw := []byte(escaped)
-	truncated, padded := false, false
-	actual := original
-	if len(raw) < origByteLen {
-		raw = append(raw, bytes.Repeat([]byte{' '}, origByteLen-len(raw))...)
-		padded = true
-	} else if len(raw) > origByteLen {
-		raw = raw[:origByteLen]
-		actual = string(raw)
-		truncated = true
+// fitToLength pads with spaces or truncates runes so the result is exactly
+// origLen characters long.
+//
+// The budget is in characters rather than bytes because the surrounding
+// content stream positions later text with absolute Td operators laid out
+// against the original glyph count. Cutting runes (not bytes) also means a
+// truncation can never split a multi-byte character or, once escaped, an
+// escape sequence.
+func fitToLength(newText string, origLen int) (string, bool, bool) {
+	runes := []rune(newText)
+	switch {
+	case len(runes) > origLen:
+		return string(runes[:origLen]), true, false
+	case len(runes) < origLen:
+		return newText + strings.Repeat(" ", origLen-len(runes)), false, true
 	}
-	result := make([]byte, 0, len(raw)+2)
-	result = append(result, '(')
-	result = append(result, raw...)
-	result = append(result, ')')
-	return result, actual, truncated, padded
+	return newText, false, false
 }
 
-func buildHexReplacement(newText string, origByteLen int) ([]byte, string, bool, bool) {
-	raw := []byte(newText)
-	truncated, padded := false, false
-	actual := newText
-	if len(raw) < origByteLen {
-		raw = append(raw, bytes.Repeat([]byte{' '}, origByteLen-len(raw))...)
-		padded = true
-	} else if len(raw) > origByteLen {
-		raw = raw[:origByteLen]
-		actual = string(raw)
-		truncated = true
-	}
+func buildLiteralReplacement(newText string, origLen int) ([]byte, string, bool, bool) {
+	actual, truncated, padded := fitToLength(newText, origLen)
+
+	var buf bytes.Buffer
+	buf.WriteByte('(')
+	buf.WriteString(escapePDFString(actual))
+	buf.WriteByte(')')
+	return buf.Bytes(), actual, truncated, padded
+}
+
+func buildHexReplacement(newText string, origLen int) ([]byte, string, bool, bool) {
+	actual, truncated, padded := fitToLength(newText, origLen)
+
 	var buf bytes.Buffer
 	buf.WriteByte('<')
-	for _, b := range raw { fmt.Fprintf(&buf, "%02x", b) }
+	for _, r := range actual {
+		fmt.Fprintf(&buf, "%02x", encodeByte(r))
+	}
 	buf.WriteByte('>')
 	return buf.Bytes(), actual, truncated, padded
 }
 
+// encodeByte narrows a rune to the single byte a simple font's encoding table
+// will look up. Callers validate the input range first; anything that slips
+// through becomes '?' rather than silently emitting a different glyph.
+//
+// Writing Go's UTF-8 bytes here instead would turn é into Ã©, because the font
+// decodes these bytes through WinAnsi/MacRoman/Standard, not UTF-8.
+// ISO 32000-1:2008, §9.6.6.
+func encodeByte(r rune) byte {
+	if r < 0 || r > 0xFF {
+		return '?'
+	}
+	return byte(r)
+}
+
+// escapePDFString renders text as the inner bytes of a PDF literal string.
+// ISO 32000-1:2008, §7.3.4.2.
 func escapePDFString(s string) string {
 	var b strings.Builder
-	for _, c := range []byte(s) {
-		switch c {
-		case '(':  b.WriteString(`\(`)
-		case ')':  b.WriteString(`\)`)
-		case '\\': b.WriteString(`\\`)
-		default:   b.WriteByte(c)
+	for _, r := range s {
+		switch r {
+		case '(':
+			b.WriteString(`\(`)
+		case ')':
+			b.WriteString(`\)`)
+		case '\\':
+			b.WriteString(`\\`)
+		default:
+			b.WriteByte(encodeByte(r))
 		}
 	}
 	return b.String()
