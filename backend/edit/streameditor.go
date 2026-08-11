@@ -74,10 +74,10 @@ func (s *Service) ReplaceSpanText(
 	}
 
 	original := stream[opStart:opEnd]
-	isHex   := len(original) > 0 && original[0] == '<'
+	isHex := len(original) > 0 && original[0] == '<'
 
 	var replacement []byte
-	var actualText  string
+	var actualText string
 	var truncated, padded bool
 
 	if isHex {
@@ -91,9 +91,9 @@ func (s *Service) ReplaceSpanText(
 	}
 
 	modified := make([]byte, 0, len(stream))
-	modified  = append(modified, stream[:opStart]...)
-	modified  = append(modified, replacement...)
-	modified  = append(modified, stream[opEnd:]...)
+	modified = append(modified, stream[:opStart]...)
+	modified = append(modified, replacement...)
+	modified = append(modified, stream[opEnd:]...)
 
 	// Write back into the xref table via the indirect reference
 	if err := writeStreamBack(ctx, refs[streamIndex], modified); err != nil {
@@ -152,7 +152,7 @@ func pageContentStreamsWithRefs(ctx *model.Context, pageNum int) ([][]byte, []ty
 
 	case types.Array:
 		var allBytes [][]byte
-		var allRefs  []types.IndirectRef
+		var allRefs []types.IndirectRef
 		for _, elem := range v {
 			ir, ok := elem.(types.IndirectRef)
 			if !ok {
@@ -170,7 +170,7 @@ func pageContentStreamsWithRefs(ctx *model.Context, pageNum int) ([][]byte, []ty
 				continue
 			}
 			allBytes = append(allBytes, sd.Content)
-			allRefs  = append(allRefs, ir)
+			allRefs = append(allRefs, ir)
 		}
 		return allBytes, allRefs, nil
 	}
@@ -283,13 +283,20 @@ func unescapePDFLiteral(s string) string {
 		if b[i] == '\\' && i+1 < len(b) {
 			i++
 			switch b[i] {
-			case 'n':  buf.WriteByte('\n')
-			case 'r':  buf.WriteByte('\r')
-			case 't':  buf.WriteByte('\t')
-			case '(':  buf.WriteByte('(')
-			case ')':  buf.WriteByte(')')
-			case '\\': buf.WriteByte('\\')
-			default:   buf.WriteByte(b[i])
+			case 'n':
+				buf.WriteByte('\n')
+			case 'r':
+				buf.WriteByte('\r')
+			case 't':
+				buf.WriteByte('\t')
+			case '(':
+				buf.WriteByte('(')
+			case ')':
+				buf.WriteByte(')')
+			case '\\':
+				buf.WriteByte('\\')
+			default:
+				buf.WriteByte(b[i])
 			}
 		} else {
 			buf.WriteByte(b[i])

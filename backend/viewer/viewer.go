@@ -106,8 +106,8 @@ func (s *Service) IsEncrypted(filePath string) bool {
 }
 
 type EncryptionStatus struct {
-	Encrypted    bool `json:"encrypted"`
-	HasUserPW    bool `json:"hasUserPW"`    // true if a user (open) password is required
+	Encrypted bool `json:"encrypted"`
+	HasUserPW bool `json:"hasUserPW"` // true if a user (open) password is required
 }
 
 // EncryptionStatus returns encryption state for a file.
@@ -127,10 +127,14 @@ func (s *Service) EncryptionStatus(filePath string) EncryptionStatus {
 
 func (s *Service) CopyFile(src, dst string) error {
 	in, err := os.Open(src)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	defer in.Close()
 	out, err := os.Create(dst)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	defer out.Close()
 	_, err = io.Copy(out, in)
 	return err

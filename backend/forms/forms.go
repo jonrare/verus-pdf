@@ -35,23 +35,23 @@ type Result struct {
 
 // FormField describes a single interactive form field.
 type FormField struct {
-	ID       string   `json:"id"`
-	Name     string   `json:"name"`
-	Type     string   `json:"type"`
-	Value    string   `json:"value"`
-	Default  string   `json:"default"`
-	Options  []string `json:"options"`
-	PageNum  int      `json:"pageNum"`
-	X        float64  `json:"x"`
-	Y        float64  `json:"y"`
-	Width    float64  `json:"width"`
-	Height   float64  `json:"height"`
-	ReadOnly bool     `json:"readOnly"`
-	MaxLen   int      `json:"maxLen"`
-	FontSize float64  `json:"fontSize"` // from /DA, 0 = auto-size to fit field
-	Comb     bool     `json:"comb"`     // §12.7.4.3 bit 25: divide field into MaxLen equal cells
-	Multiline bool    `json:"multiline"` // §12.7.4.3 bit 13: multi-line text field
-	OnValue  string   `json:"onValue"`  // for checkboxes: the "on" appearance name (e.g. "1", "Yes")
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	Type      string   `json:"type"`
+	Value     string   `json:"value"`
+	Default   string   `json:"default"`
+	Options   []string `json:"options"`
+	PageNum   int      `json:"pageNum"`
+	X         float64  `json:"x"`
+	Y         float64  `json:"y"`
+	Width     float64  `json:"width"`
+	Height    float64  `json:"height"`
+	ReadOnly  bool     `json:"readOnly"`
+	MaxLen    int      `json:"maxLen"`
+	FontSize  float64  `json:"fontSize"`  // from /DA, 0 = auto-size to fit field
+	Comb      bool     `json:"comb"`      // §12.7.4.3 bit 25: divide field into MaxLen equal cells
+	Multiline bool     `json:"multiline"` // §12.7.4.3 bit 13: multi-line text field
+	OnValue   string   `json:"onValue"`   // for checkboxes: the "on" appearance name (e.g. "1", "Yes")
 }
 
 // GetFormFields returns all interactive form fields in the PDF.
@@ -385,7 +385,6 @@ func (s *Service) ResetForm(inputPath, outputPath string) Result {
 
 	return Result{OutputPath: outputPath}
 }
-
 
 // catalogDict safely gets the document catalog (root) dictionary.
 func catalogDict(ctx *model.Context) (types.Dict, error) {
@@ -856,7 +855,6 @@ func inheritedInt(ctx *model.Context, d types.Dict, key string) int {
 	}
 	return 0
 }
-
 
 // parseDAFontSize extracts the font size from a /DA (Default Appearance) string.
 // DA format: "/FontName size Tf [color operators]"

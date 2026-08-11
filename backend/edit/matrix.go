@@ -29,9 +29,9 @@ import "math"
 // Matrix represents a 2D affine transformation.
 // Elements correspond to the PDF matrix [a b c d e f]:
 //
-//   [ A  B  0 ]
-//   [ C  D  0 ]
-//   [ E  F  1 ]
+//	[ A  B  0 ]
+//	[ C  D  0 ]
+//	[ E  F  1 ]
 type Matrix struct {
 	A, B, C, D, E, F float64
 }
@@ -57,9 +57,9 @@ func Scale(sx, sy float64) Matrix {
 //
 // Given left = [la, lb, lc, ld, le, lf] and right = [ra, rb, rc, rd, re, rf]:
 //
-//   [ la lb 0 ]   [ ra rb 0 ]
-//   [ lc ld 0 ] × [ rc rd 0 ]
-//   [ le lf 1 ]   [ re rf 1 ]
+//	[ la lb 0 ]   [ ra rb 0 ]
+//	[ lc ld 0 ] × [ rc rd 0 ]
+//	[ le lf 1 ]   [ re rf 1 ]
 func (left Matrix) Multiply(right Matrix) Matrix {
 	return Matrix{
 		A: left.A*right.A + left.B*right.C,
@@ -73,8 +73,8 @@ func (left Matrix) Multiply(right Matrix) Matrix {
 
 // Transform applies the matrix to a point (x, y).
 //
-//   x' = A·x + C·y + E
-//   y' = B·x + D·y + F
+//	x' = A·x + C·y + E
+//	y' = B·x + D·y + F
 func (m Matrix) Transform(x, y float64) (float64, float64) {
 	return m.A*x + m.C*y + m.E,
 		m.B*x + m.D*y + m.F

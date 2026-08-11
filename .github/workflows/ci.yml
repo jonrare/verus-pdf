@@ -51,6 +51,16 @@ jobs:
           go mod tidy
           git diff --exit-code go.mod go.sum
 
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l ./backend ./*.go)
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            gofmt -d ./backend ./*.go
+            exit 1
+          fi
+
       - name: go vet
         run: go vet -tags webkit2_41 ./...
 

@@ -22,12 +22,12 @@ import (
 // fontInfo holds decoded font metadata for one font resource.
 type fontInfo struct {
 	name         string
-	toUnicode    map[uint16]rune   // glyph ID → Unicode code point
-	fromUnicode  map[rune]uint16   // Unicode → glyph ID (reverse of toUnicode)
-	widths       map[uint16]int    // glyph ID → width in 1/1000 units
-	defaultWidth int               // default glyph width (1/1000 units)
-	isCID        bool              // true for Type0/CID fonts
-	encoding     *encodingTable    // byte → Unicode for non-CID fonts (nil = passthrough)
+	toUnicode    map[uint16]rune // glyph ID → Unicode code point
+	fromUnicode  map[rune]uint16 // Unicode → glyph ID (reverse of toUnicode)
+	widths       map[uint16]int  // glyph ID → width in 1/1000 units
+	defaultWidth int             // default glyph width (1/1000 units)
+	isCID        bool            // true for Type0/CID fonts
+	encoding     *encodingTable  // byte → Unicode for non-CID fonts (nil = passthrough)
 }
 
 // pagefonts maps font resource names (e.g. "F5") to their fontInfo.

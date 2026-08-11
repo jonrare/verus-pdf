@@ -32,15 +32,27 @@ func TestMatrixMultiply(t *testing.T) {
 
 	// Expected: [0.612, 0, 0, -0.612, 0, 792]
 	const eps = 0.001
-	if math.Abs(ctm.A-0.612) > eps { t.Errorf("A: got %v want 0.612", ctm.A) }
-	if math.Abs(ctm.B) > eps { t.Errorf("B: got %v want 0", ctm.B) }
-	if math.Abs(ctm.D-(-0.612)) > eps { t.Errorf("D: got %v want -0.612", ctm.D) }
-	if math.Abs(ctm.F-792) > eps { t.Errorf("F: got %v want 792", ctm.F) }
+	if math.Abs(ctm.A-0.612) > eps {
+		t.Errorf("A: got %v want 0.612", ctm.A)
+	}
+	if math.Abs(ctm.B) > eps {
+		t.Errorf("B: got %v want 0", ctm.B)
+	}
+	if math.Abs(ctm.D-(-0.612)) > eps {
+		t.Errorf("D: got %v want -0.612", ctm.D)
+	}
+	if math.Abs(ctm.F-792) > eps {
+		t.Errorf("F: got %v want 792", ctm.F)
+	}
 
 	// Transform point (40, 61) — "Order Summary" in Amazon PDF
 	x, y := ctm.Transform(40, 61)
-	if math.Abs(x-24.48) > eps { t.Errorf("x: got %v want ~24.48", x) }
-	if math.Abs(y-754.668) > eps { t.Errorf("y: got %v want ~754.668", y) }
+	if math.Abs(x-24.48) > eps {
+		t.Errorf("x: got %v want ~24.48", x)
+	}
+	if math.Abs(y-754.668) > eps {
+		t.Errorf("y: got %v want ~754.668", y)
+	}
 }
 
 func TestMatrixInverse(t *testing.T) {
@@ -163,13 +175,13 @@ endcmap
 		gid  uint16
 		want rune
 	}{
-		{0x0005, ' '},   // bfchar
-		{0x000B, '&'},   // bfchar
-		{0x0026, 'A'},   // bfrange start
-		{0x0034, 'O'},   // bfrange offset 0x0E
-		{0x003E, 'Y'},   // bfrange end
-		{0x0046, 'a'},   // second range start
-		{0x0055, 'p'},   // second range end
+		{0x0005, ' '}, // bfchar
+		{0x000B, '&'}, // bfchar
+		{0x0026, 'A'}, // bfrange start
+		{0x0034, 'O'}, // bfrange offset 0x0E
+		{0x003E, 'Y'}, // bfrange end
+		{0x0046, 'a'}, // second range start
+		{0x0055, 'p'}, // second range end
 	}
 
 	for _, tt := range tests {
@@ -212,15 +224,15 @@ func TestWinAnsiEncoding(t *testing.T) {
 		code byte
 		want rune
 	}{
-		{0x41, 'A'},      // standard ASCII
-		{0x91, 0x2018},   // left single quote
-		{0x92, 0x2019},   // right single quote
-		{0x93, 0x201C},   // left double quote
-		{0x94, 0x201D},   // right double quote
-		{0x95, 0x2022},   // bullet
-		{0x96, 0x2013},   // en dash
-		{0x97, 0x2014},   // em dash
-		{0x80, 0x20AC},   // euro sign
+		{0x41, 'A'},    // standard ASCII
+		{0x91, 0x2018}, // left single quote
+		{0x92, 0x2019}, // right single quote
+		{0x93, 0x201C}, // left double quote
+		{0x94, 0x201D}, // right double quote
+		{0x95, 0x2022}, // bullet
+		{0x96, 0x2013}, // en dash
+		{0x97, 0x2014}, // em dash
+		{0x80, 0x20AC}, // euro sign
 	}
 	for _, tt := range tests {
 		got := winAnsiEncoding[tt.code]
@@ -267,10 +279,18 @@ ET`)
 	if len(spans) != 2 {
 		t.Fatalf("got %d spans want 2", len(spans))
 	}
-	if spans[0].Text != "First line" { t.Errorf("span 0 text: %q", spans[0].Text) }
-	if spans[0].X != 100             { t.Errorf("span 0 X: %v", spans[0].X) }
-	if spans[0].Y != 700             { t.Errorf("span 0 Y: %v", spans[0].Y) }
-	if spans[1].Text != "Second line" { t.Errorf("span 1 text: %q", spans[1].Text) }
+	if spans[0].Text != "First line" {
+		t.Errorf("span 0 text: %q", spans[0].Text)
+	}
+	if spans[0].X != 100 {
+		t.Errorf("span 0 X: %v", spans[0].X)
+	}
+	if spans[0].Y != 700 {
+		t.Errorf("span 0 Y: %v", spans[0].Y)
+	}
+	if spans[1].Text != "Second line" {
+		t.Errorf("span 1 text: %q", spans[1].Text)
+	}
 }
 
 func TestParseContentStream_TJArray(t *testing.T) {

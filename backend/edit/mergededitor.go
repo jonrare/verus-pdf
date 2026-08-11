@@ -158,11 +158,11 @@ func (s *Service) EditMergedSpans(
 		blockEnd   int
 	}
 	type blockInfo struct {
-		key      blockKey
-		fontName string
-		tfSize   float64
+		key                          blockKey
+		fontName                     string
+		tfSize                       float64
 		tmA, tmB, tmC, tmD, tmE, tmF float64
-		chars    []rune // all characters for this block after editing
+		chars                        []rune // all characters for this block after editing
 	}
 
 	blockMap := make(map[blockKey]*blockInfo)
@@ -176,7 +176,7 @@ func (s *Service) EditMergedSpans(
 				key:      bk,
 				fontName: sp.FontName,
 				tfSize:   sp.TfSize,
-				tmA: sp.TmA, tmB: sp.TmB,
+				tmA:      sp.TmA, tmB: sp.TmB,
 				tmC: sp.TmC, tmD: sp.TmD,
 				tmE: sp.TmE, tmF: sp.TmF,
 			}
@@ -266,14 +266,15 @@ func (s *Service) EditMergedSpans(
 // buildBTBlock constructs a complete BT...ET content stream block.
 //
 // Output format:
-//   BT
-//   /FontKey TfSize Tf
-//   tmA tmB tmC tmD tmE tmF Tm
-//   <glyph0> Tj
-//   width0 0 Td <glyph1> Tj
-//   width1 0 Td <glyph2> Tj
-//   ...
-//   ET
+//
+//	BT
+//	/FontKey TfSize Tf
+//	tmA tmB tmC tmD tmE tmF Tm
+//	<glyph0> Tj
+//	width0 0 Td <glyph1> Tj
+//	width1 0 Td <glyph2> Tj
+//	...
+//	ET
 func buildBTBlock(fontName string, tfSize float64,
 	tmA, tmB, tmC, tmD, tmE, tmF float64,
 	chars []rune, fi *fontInfo,
@@ -430,7 +431,7 @@ type editOp struct {
 type editOpKind int
 
 const (
-	opKeep    editOpKind = iota
+	opKeep editOpKind = iota
 	opDelete
 	opInsert
 	opReplace
@@ -536,9 +537,13 @@ func dpDiff(old, new []rune) []editOp {
 
 func min3(a, b, c int) int {
 	if a < b {
-		if a < c { return a }
+		if a < c {
+			return a
+		}
 		return c
 	}
-	if b < c { return b }
+	if b < c {
+		return b
+	}
 	return c
 }

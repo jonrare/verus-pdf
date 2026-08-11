@@ -4,8 +4,8 @@ import (
 	"context"
 
 	"veruspdf/backend/annotate"
-	"veruspdf/backend/convert"
 	"veruspdf/backend/bookmarks"
+	"veruspdf/backend/convert"
 	"veruspdf/backend/edit"
 	"veruspdf/backend/forms"
 	"veruspdf/backend/merge"
@@ -18,28 +18,28 @@ import (
 type App struct {
 	ctx context.Context
 
-	MergeService    *merge.Service
-	SecurityService *security.Service
-	OptimizeService *optimize.Service
-	ViewerService   *viewer.Service
-	AnnotateService *annotate.Service
-	FormsService    *forms.Service
-	ConvertService  *convert.Service
-	OCRService      *ocr.Service
+	MergeService     *merge.Service
+	SecurityService  *security.Service
+	OptimizeService  *optimize.Service
+	ViewerService    *viewer.Service
+	AnnotateService  *annotate.Service
+	FormsService     *forms.Service
+	ConvertService   *convert.Service
+	OCRService       *ocr.Service
 	BookmarksService *bookmarks.Service
 	EditService      *edit.Service
 }
 
 func NewApp() *App {
 	return &App{
-		MergeService:    merge.New(),
-		SecurityService: security.New(),
-		OptimizeService: optimize.New(),
-		ViewerService:   viewer.New(),
-		AnnotateService: annotate.New(),
-		FormsService:    forms.New(),
-		ConvertService:  convert.New(),
-		OCRService:      ocr.New(),
+		MergeService:     merge.New(),
+		SecurityService:  security.New(),
+		OptimizeService:  optimize.New(),
+		ViewerService:    viewer.New(),
+		AnnotateService:  annotate.New(),
+		FormsService:     forms.New(),
+		ConvertService:   convert.New(),
+		OCRService:       ocr.New(),
 		BookmarksService: &bookmarks.Service{},
 		EditService:      edit.New(),
 	}

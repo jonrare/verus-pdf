@@ -41,8 +41,8 @@ import (
 // TextSpan is a single positioned run of text extracted from the stream.
 type TextSpan struct {
 	Text     string  `json:"text"`
-	X        float64 `json:"x"`    // page-space X (in PDF points, origin bottom-left)
-	Y        float64 `json:"y"`    // page-space Y
+	X        float64 `json:"x"`        // page-space X (in PDF points, origin bottom-left)
+	Y        float64 `json:"y"`        // page-space Y
 	Width    float64 `json:"width"`    // page-space width in points (0 = unknown, use estimate)
 	Rotation float64 `json:"rotation"` // degrees, CCW, 0 = normal horizontal
 	FontName string  `json:"fontName"`
@@ -124,9 +124,9 @@ func ExtractText(filePath string, pageNum int) ([]TextSpan, error) {
 
 // graphicsState holds the mutable state that q/Q saves and restores.
 type graphicsState struct {
-	ctm       Matrix  // current transformation matrix
-	fontKey   string  // current font resource name
-	curFont   *fontInfo
+	ctm            Matrix // current transformation matrix
+	fontKey        string // current font resource name
+	curFont        *fontInfo
 	textRenderMode int // Tr — 0=fill, 1=stroke, 2=fill+stroke, 3=invisible
 }
 
@@ -146,22 +146,22 @@ type textState struct {
 // ── Stream parser ─────────────────────────────────────────────────────────────
 
 type streamParser struct {
-	ctx       *model.Context
-	fonts     pageFonts
-	pageNum   int
+	ctx     *model.Context
+	fonts   pageFonts
+	pageNum int
 
-	gs        graphicsState   // current graphics state
-	gsStack   []graphicsState // saved states (q pushes, Q pops)
-	ts        textState       // current text state
-	inBT      bool            // inside BT...ET block
+	gs      graphicsState   // current graphics state
+	gsStack []graphicsState // saved states (q pushes, Q pops)
+	ts      textState       // current text state
+	inBT    bool            // inside BT...ET block
 
 	// Block tracking for BT/ET rewriting
-	btStart        int     // byte offset of current BT
-	blockTm        Matrix  // the Tm set in the current BT block
-	blockSpanStart int     // index into p.spans where current block starts
+	btStart        int    // byte offset of current BT
+	blockTm        Matrix // the Tm set in the current BT block
+	blockSpanStart int    // index into p.spans where current block starts
 
-	spans     []TextSpan      // accumulated text spans
-	depth     int             // Form XObject recursion depth
+	spans []TextSpan // accumulated text spans
+	depth int        // Form XObject recursion depth
 }
 
 const maxFormXObjectDepth = 10 // prevent infinite recursion
@@ -458,21 +458,21 @@ func (p *streamParser) showString(tok token, streamIdx int) {
 	pageWidth := advance * (p.ts.hScale / 100.0) * tmScaleX * ctmScaleX
 
 	p.spans = append(p.spans, TextSpan{
-		Text:     text,
-		X:        px,
-		Y:        py,
-		Width:    pageWidth,
-		Rotation: rot,
-		FontName: p.gs.fontKey,
-		FontSize: fsize,
-		PageNum:  p.pageNum,
+		Text:        text,
+		X:           px,
+		Y:           py,
+		Width:       pageWidth,
+		Rotation:    rot,
+		FontName:    p.gs.fontKey,
+		FontSize:    fsize,
+		PageNum:     p.pageNum,
 		StreamIndex: streamIdx,
-		OpStart:  tok.start,
-		OpEnd:    tok.end,
+		OpStart:     tok.start,
+		OpEnd:       tok.end,
 		// Block fields (BlockEnd filled in at ET)
 		BlockStart: p.btStart,
-		TfSize:    p.ts.tfSize,
-		TmA: p.blockTm.A, TmB: p.blockTm.B,
+		TfSize:     p.ts.tfSize,
+		TmA:        p.blockTm.A, TmB: p.blockTm.B,
 		TmC: p.blockTm.C, TmD: p.blockTm.D,
 		TmE: p.blockTm.E, TmF: p.blockTm.F,
 	})
@@ -551,7 +551,7 @@ func (p *streamParser) showTJArray(operands []token, streamIdx int) {
 			OpEnd:       lastEnd,
 			BlockStart:  p.btStart,
 			TfSize:      p.ts.tfSize,
-			TmA: p.blockTm.A, TmB: p.blockTm.B,
+			TmA:         p.blockTm.A, TmB: p.blockTm.B,
 			TmC: p.blockTm.C, TmD: p.blockTm.D,
 			TmE: p.blockTm.E, TmF: p.blockTm.F,
 		})
