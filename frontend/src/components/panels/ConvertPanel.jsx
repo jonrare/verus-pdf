@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useAppStore } from '../../stores/appStore'
 import { useOperation } from '../../hooks/useOperation'
-import { PDFToText, ExtractImages } from '../../wails.js'
+import { PDFToText, ExtractImages, SaveExtractedText } from '../../wails.js'
 import { FileText, Download } from 'lucide-react'
 
 function Section({ title, icon: Icon, children }) {
@@ -42,20 +42,21 @@ export default function ConvertPanel() {
     }
   }
 
+  // Saves through the Go side, which opens the platform's native dialog and
+  // copies from the temp file written during extraction.
+  //
+  // window.showSaveFilePicker is Chromium-only: it does not exist in the
+  // WebKitGTK webview on Linux or WKWebView on macOS, so using it here made
+  // this button fail outright on two of the three supported platforms.
   const handleSave = async () => {
     setSaveError('')
     try {
-      const name = (document?.path ?? 'document').split(/[/\\]/).pop().replace(/\.pdf$/i, '') + '.txt'
-      const handle = await window.showSaveFilePicker({
-        suggestedName: name,
-        types: [{ description: 'Text Files', accept: { 'text/plain': ['.txt'] } }]
-      })
-      const writable = await handle.createWritable()
-      // Strip any null bytes that may have leaked from CID font decoding
-      await writable.write(textResult.replace(/\0/g, ''))
-      await writable.close()
+      const name = (document?.originalPath ?? document?.path ?? 'document')
+        .split(/[/\\]/).pop().replace(/\.pdf$/i, '') + '.txt'
+      const err = await SaveExtractedText(name)
+      if (err) setSaveError(err)
     } catch (e) {
-      if (e.name !== 'AbortError') setSaveError(String(e))
+      setSaveError(e.message ?? String(e))
     }
   }
 

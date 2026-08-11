@@ -56,4 +56,5 @@ func (a *App) startup(ctx context.Context) {
 // ones — would outlive the application.
 func (a *App) shutdown(ctx context.Context) {
 	a.ViewerService.Cleanup()
+	a.ConvertService.Cleanup()
 }

@@ -182,6 +182,17 @@ func (s *Service) WriteFromTemp(destPath string) string {
 	return ""
 }
 
+// Cleanup removes the temp file left behind by the last text extraction.
+// Called on application shutdown; without it the extracted text of the last
+// document opened outlives the session.
+func (s *Service) Cleanup() {
+	if s.lastTempPath == "" {
+		return
+	}
+	os.Remove(s.lastTempPath)
+	s.lastTempPath = ""
+}
+
 func abs(x float64) float64 {
 	if x < 0 {
 		return -x
