@@ -11,7 +11,8 @@ package edit
 // Fonts may also specify a /Differences array that overrides individual
 // code points with named glyphs.
 //
-// Spec: PDF 32000-1:2008 §9.6.1, §9.6.6, Annex D
+// Spec: ISO 32000-1:2008, §9.6.1 and §9.6.6 (simple font encodings),
+// Annex D (predefined encoding tables). See docs/pdf-spec.md.
 
 // encodingTable maps byte values (0-255) to Unicode code points.
 type encodingTable [256]rune

@@ -4,6 +4,10 @@ package edit
 //
 // Reads a page's content stream(s), splices in the replacement string at the
 // byte offsets reported by the decoder, then writes the modified PDF back.
+//
+// Spec: ISO 32000-1:2008, §7.3.4.2 (literal strings), §7.3.4.3 (hex strings).
+// See docs/pdf-spec.md — in particular the known deviations around multi-stream
+// pages and non-ASCII replacement text.
 
 import (
 	"bytes"

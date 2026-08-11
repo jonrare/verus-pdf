@@ -12,6 +12,10 @@ package edit
 // The approach: instead of editing individual hex strings in place (which
 // can't handle length changes due to fixed Td positioning), we reconstruct
 // the full BT/ET block from scratch using the font's glyph widths.
+//
+// Spec: ISO 32000-1:2008, §9.4.4 (text space details) — glyph widths are in
+// 1/1000 text-space units, so an advance is width/1000 × fontSize. See
+// docs/pdf-spec.md.
 
 import (
 	"bytes"

@@ -3,7 +3,13 @@
 // Reads and fills PDF form fields (text fields, checkboxes, dropdowns)
 // using pdfcpu's low-level xref table access.
 //
-// Spec: PDF 32000-1:2008 §12.7 (Interactive Forms)
+// Spec: ISO 32000-1:2008, §12.7.3 (field dictionaries), §12.7.4 (field types),
+// §12.5.6.19 (widget annotations). See docs/pdf-spec.md.
+//
+// Note: XFA forms are deprecated in ISO 32000-2:2020, but XFA-converted
+// documents remain common — the IRS W-9 is the canonical example. In those,
+// widget annotations carry /FT directly and never appear in /AcroForm /Fields,
+// which is why GetFormFields also sweeps each page's /Annots array.
 package forms
 
 import (

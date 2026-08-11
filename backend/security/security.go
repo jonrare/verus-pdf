@@ -27,6 +27,11 @@ const (
 )
 
 // Encrypt protects a PDF with AES-256 encryption.
+//
+// AES-256 (security handler revision 6) is NOT part of ISO 32000-1:2008 — it
+// arrived via Adobe Extension Level 3 and was standardised in ISO 32000-2:2020,
+// §7.6.4.3. Readers older than roughly Acrobat X will not open these files.
+//
 // ownerPassword: full access password
 // userPassword:  restricted open password (can be empty for open-but-restricted)
 // permissions:   "none", "print", or "all"

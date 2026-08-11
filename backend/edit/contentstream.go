@@ -1,17 +1,21 @@
 package edit
 
-// PDF content stream decoder — production-grade text extraction.
+// PDF content stream decoder — positioned text extraction.
 //
-// Implements the full text rendering pipeline from ISO 32000-1:2008 §9:
-//   - CTM stack with q/Q push/pop and cm concatenation (§8.3, §8.4.4)
-//   - All text positioning operators: Tm, Td, TD, T*, TL (§9.4.2)
-//   - All text showing operators: Tj, TJ, ', " (§9.4.3)
-//   - Text state: Tf, Tc, Tw, Tz, TL, Tr, Ts (§9.3)
-//   - Font decoding via ToUnicode CMap (§9.10.2)
-//   - Standard font encodings: WinAnsi, MacRoman, Standard (§9.6.6)
-//   - CID font glyph width tables for position tracking (§9.7.4.3)
-//   - Form XObject traversal via Do operator (§8.10)
-//   - Span merging: per-character spans → readable word/line spans
+// Spec: ISO 32000-1:2008. See docs/pdf-spec.md for the full clause index and
+// the list of known deviations.
+//
+//   - Tokeniser over content stream syntax        §7.2, §7.3.4, §8.2
+//   - CTM stack: q / Q / cm                       §8.3.3, §8.4.2
+//   - Text state: Tf Tc Tw Tz TL Tr Ts            §9.3
+//   - Text positioning: Tm Td TD T*               §9.4.2
+//   - Text showing: Tj TJ ' "                     §9.4.3
+//   - Font decoding via /ToUnicode CMap           §9.7.5
+//   - Standard encodings: WinAnsi, MacRoman, …    §9.6.6, Annex D
+//   - CID glyph widths for advance tracking       §9.7.4.3
+//   - Form XObject traversal via Do               §8.10.1
+//   - Span merging: per-character → word/line spans (not in the spec —
+//     a display convenience, see mergeAdjacentSpans)
 //
 // Architecture: streamParser holds all state (CTM stack, text state, fonts,
 // pdfcpu context) and accumulates TextSpans. This enables recursive parsing

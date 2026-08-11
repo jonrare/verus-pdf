@@ -4,9 +4,10 @@ package edit
 //
 // Reads /Font resources from a PDF page to extract:
 //   - ToUnicode CMaps  → glyph ID → Unicode mapping
-//   - /W width arrays  → glyph ID → advance width (in 1/1000 units)
+//   - width arrays     → glyph ID → advance width (in 1/1000 text-space units)
 //
-// Spec: PDF 32000-1:2008 §9.7 (ToUnicode), §9.7.4.3 (CIDFont widths)
+// Spec: ISO 32000-1:2008, §9.7.5 (/ToUnicode CMaps), §9.6.2.1 (simple font
+// /Widths), §9.7.4.3 (CIDFont /W arrays). See docs/pdf-spec.md.
 
 import (
 	"fmt"

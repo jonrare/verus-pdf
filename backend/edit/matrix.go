@@ -13,7 +13,11 @@ package edit
 //   x' = a·x + c·y + e
 //   y' = b·x + d·y + f
 //
-// Spec: PDF 32000-1:2008 §8.3.3
+// Spec: ISO 32000-1:2008, §8.3.3 (coordinate systems)
+//
+// Note the row-vector convention: points are transformed on the LEFT, which is
+// the transpose of the column-vector convention used in most graphics
+// literature. See docs/pdf-spec.md.
 //
 // Note on `cm` concatenation order:
 // The cm operator performs CTM' = M_arg × CTM (pre-multiplication).
