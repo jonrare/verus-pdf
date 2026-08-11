@@ -2,7 +2,6 @@ package viewer
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"io"
 	"os"
@@ -22,6 +21,7 @@ type Service struct {
 	sessionDir  string   // private scratch directory, created on first use
 	workingFile []string // paths handed out, oldest first
 	counter     int
+	served      map[string]string // token → path the webview may read
 }
 
 func New() *Service { return &Service{} }
@@ -242,14 +242,6 @@ func (s *Service) SaveDocument(inputPath, outputPath string) Result {
 	return Result{OutputPath: outputPath}
 }
 
-func (s *Service) ReadFileBytes(filePath string) (string, error) {
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return "", fmt.Errorf("could not read file: %v", err)
-	}
-	return base64.StdEncoding.EncodeToString(data), nil
-}
-
 // maxWorkingFiles bounds how many intermediate files a session keeps. It sits
 // just above the UI's 20-level undo stack so every reachable undo target still
 // exists on disk.
@@ -295,6 +287,7 @@ func (s *Service) NewWorkingPath(name string) (string, error) {
 	s.workingFile = append(s.workingFile, path)
 	for len(s.workingFile) > maxWorkingFiles {
 		os.Remove(s.workingFile[0])
+		s.revokeFile(s.workingFile[0])
 		s.workingFile = s.workingFile[1:]
 	}
 	return path, nil
@@ -305,6 +298,10 @@ func (s *Service) NewWorkingPath(name string) (string, error) {
 func (s *Service) Cleanup() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Revoke the webview's file grants first — they are independent of the
+	// session directory, since a grant can name a document anywhere on disk.
+	s.served = nil
 
 	if s.sessionDir == "" {
 		return

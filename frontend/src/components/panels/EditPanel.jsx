@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useAppStore } from '../../stores/appStore'
 import { useOperation } from '../../hooks/useOperation'
-import { AddWatermarkText, AddTextStamp, AddPageNumbers, RemoveWatermarks, RemoveMetadata, DebugPageStream } from '../../wails.js'
+import { AddWatermarkText, AddTextStamp, AddPageNumbers, RemoveWatermarks, RemoveMetadata } from '../../wails.js'
 import { Droplets, Type, Hash, Trash2, FileX } from 'lucide-react'
 
 function Section({ title, icon: Icon, children }) {
@@ -27,7 +27,7 @@ function Field({ label, children }) {
 }
 
 export default function EditPanel() {
-  const { document, currentPage } = useAppStore()
+  const { document } = useAppStore()
   const { run, docPath } = useOperation()
 
   const [wmText, setWmText]               = useState('DRAFT')
@@ -41,22 +41,12 @@ export default function EditPanel() {
   const [pnPos, setPnPos]                 = useState('bc')
   const [pnSize, setPnSize]               = useState(10)
   const [removePages, setRemovePages]     = useState('')
-  const [debugStream, setDebugStream]     = useState(null)
 
   if (!document) return null
 
   const buildStampDescriptor = () => {
     const colorHex = stampColor.replace('#', '')
     return `font:Helvetica, points:${stampSize}, color:#${colorHex}, rotation:${stampRotation}, opacity:${stampOpacity}, position:${stampPos}`
-  }
-
-  const handleDebug = async () => {
-    try {
-      const result = await DebugPageStream(document.path, currentPage)
-      setDebugStream(result)
-    } catch (e) {
-      setDebugStream('Error: ' + e.message)
-    }
   }
 
   return (
@@ -144,26 +134,8 @@ export default function EditPanel() {
           </button>
         </Section>
 
-        <button onClick={handleDebug} style={{ width: '100%', padding: '6px 0', fontSize: 11, color: 'var(--text-muted)', border: '1px solid var(--border)', borderRadius: 6, marginBottom: 8 }}>
-          Debug: Dump page stream
-        </button>
-
       </div>
 
-      {debugStream && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-             onClick={() => setDebugStream(null)}>
-          <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)', borderRadius: 10, width: '80vw', maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-            <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: 12, fontWeight: 600 }}>Content Stream — Page {currentPage}</span>
-              <button onClick={() => setDebugStream(null)} style={{ fontSize: 11 }}>Close</button>
-            </div>
-            <pre style={{ margin: 0, padding: 14, overflowY: 'auto', fontSize: 11, fontFamily: 'monospace', color: 'var(--text-primary)', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-              {debugStream}
-            </pre>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

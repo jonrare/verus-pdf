@@ -23,6 +23,9 @@ func main() {
 		MinHeight: 600,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
+			// Serves the open document to pdf.js. Wails calls this for any GET
+			// the embedded assets do not satisfy.
+			Handler: app.ViewerService.FileHandler(),
 		},
 		BackgroundColour: &options.RGBA{R: 18, G: 18, B: 18, A: 1},
 		OnStartup:        app.startup,

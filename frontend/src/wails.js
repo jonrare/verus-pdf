@@ -72,9 +72,13 @@ export async function SaveDocument(inputPath, outputPath) {
   return window.go.viewer.Service.SaveDocument(inputPath, outputPath)
 }
 
-export async function ReadFileBytes(path) {
-  await ready(() => window.go?.viewer?.Service?.ReadFileBytes)
-  return window.go.viewer.Service.ReadFileBytes(path)
+// FileURL(path string) (string, error)
+// Grants the webview read access to one file and returns a relative URL the
+// asset server serves it from. Used instead of shipping the bytes across the
+// bridge as base64.
+export async function FileURL(path) {
+  await ready(() => window.go?.viewer?.Service?.FileURL)
+  return window.go.viewer.Service.FileURL(path)
 }
 
 // ── Merge ─────────────────────────────────────────────────────────────────────
@@ -230,12 +234,6 @@ export async function ReplaceSpanText(inputPath, outputPath, pageNum, streamInde
 export async function EditMergedSpans(inputPath, outputPath, pageNum, subSpans, originalMerged, newText) {
   await ready(() => window.go?.edit?.Service?.EditMergedSpans)
   return window.go.edit.Service.EditMergedSpans(inputPath, outputPath, pageNum, subSpans, originalMerged, newText)
-}
-
-// DebugPageStream(inputPath string, pageNum int) (string, error)
-export async function DebugPageStream(inputPath, pageNum) {
-  await ready(() => window.go?.edit?.Service?.DebugPageStream)
-  return window.go.edit.Service.DebugPageStream(inputPath, pageNum)
 }
 
 // ── Bookmarks ──────────────────────────────────────────────────────────────

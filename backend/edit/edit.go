@@ -2,11 +2,8 @@ package edit
 
 import (
 	"fmt"
-	"io"
-	"os"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
-	pdfcpupkg "github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 )
 
@@ -107,39 +104,4 @@ func (s *Service) AddWatermarkText(inputPath, outputPath, text string) Result {
 // span lives in the content stream we can replace it in place.
 func (s *Service) ExtractPageText(inputPath string, pageNum int) ([]TextSpan, error) {
 	return ExtractText(inputPath, pageNum)
-}
-
-// DebugPageStream returns the raw decoded content stream for a page as a
-// string. Use this to inspect what the PDF actually contains before editing.
-func (s *Service) DebugPageStream(inputPath string, pageNum int) (string, error) {
-	f, err := os.Open(inputPath)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-
-	conf := model.NewDefaultConfiguration()
-	ctx, err := api.ReadValidateAndOptimize(f, conf)
-	if err != nil {
-		return "", err
-	}
-
-	r, err := pdfcpupkg.ExtractPageContent(ctx, pageNum)
-	if err != nil {
-		return "", err
-	}
-	if r == nil {
-		return "(nil reader — page has no content stream)", nil
-	}
-
-	b, err := io.ReadAll(r)
-	if err != nil {
-		return "", err
-	}
-
-	// Show first 4000 bytes to keep the response manageable
-	if len(b) > 4000 {
-		return string(b[:4000]) + "\n\n... truncated ...", nil
-	}
-	return string(b), nil
 }

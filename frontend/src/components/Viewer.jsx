@@ -3,7 +3,7 @@ import * as pdfjsLib from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { useAppStore } from '../stores/appStore'
 import { useOperation } from '../hooks/useOperation'
-import { ReadFileBytes, RotatePages, ExtractPageText, ReplaceSpanText, EditMergedSpans, GetFormFields, FillFormFields } from '../wails.js'
+import { FileURL, RotatePages, ExtractPageText, ReplaceSpanText, EditMergedSpans, GetFormFields, FillFormFields } from '../wails.js'
 import { zoomIn, zoomOut, clampZoom } from '../zoomLevels'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
@@ -210,12 +210,12 @@ export default function Viewer({ isEditMode = false }) {
 
     async function load() {
       try {
-        const b64    = await ReadFileBytes(document.path)
+        // Fetch the document from the asset server rather than receiving it as
+        // base64 over the bridge. pdf.js streams it with range requests, so
+        // rendering starts without waiting for the whole file.
+        const url = await FileURL(document.path)
         if (cancelled) return
-        const binary = atob(b64)
-        const bytes  = new Uint8Array(binary.length)
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-        const pdf = await pdfjsLib.getDocument({ data: bytes }).promise
+        const pdf = await pdfjsLib.getDocument({ url }).promise
         if (cancelled) { pdf.destroy(); return }
         pdfRef.current = pdf
         setLoading(false)

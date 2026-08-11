@@ -4,7 +4,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -409,30 +408,6 @@ func TestOpenDocument_NotAPDF(t *testing.T) {
 	}
 	if got := New().OpenDocument(path); got.Error == "" {
 		t.Error("expected an error for a non-PDF file")
-	}
-}
-
-// ── Byte reading ─────────────────────────────────────────────────────────────
-
-func TestReadFileBytes_RoundTrips(t *testing.T) {
-	path := pdftest.TextPage(t, "doc.pdf", "BT /F1 12 Tf 72 700 Td (Hello) Tj ET")
-
-	encoded, err := New().ReadFileBytes(path)
-	if err != nil {
-		t.Fatalf("ReadFileBytes: %v", err)
-	}
-	if encoded == "" {
-		t.Fatal("got an empty string")
-	}
-	// Base64 of a PDF always begins with the encoding of "%PDF".
-	if !strings.HasPrefix(encoded, "JVBERi") {
-		t.Errorf("got %q…, which does not decode to a PDF header", encoded[:min(12, len(encoded))])
-	}
-}
-
-func TestReadFileBytes_MissingFile(t *testing.T) {
-	if _, err := New().ReadFileBytes("/nonexistent/nope.pdf"); err == nil {
-		t.Error("expected an error for a missing file")
 	}
 }
 

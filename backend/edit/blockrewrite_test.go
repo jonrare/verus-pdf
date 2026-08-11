@@ -1,8 +1,12 @@
 package edit
 
 import (
+	"os"
 	"strings"
 	"testing"
+
+	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 
 	"veruspdf/backend/internal/pdftest"
 )
@@ -168,15 +172,39 @@ func TestEditMergedSpans_PreservesBlockPrologue(t *testing.T) {
 		t.Fatalf("EditMergedSpans: %s", res.Error)
 	}
 
-	stream, err := New().DebugPageStream(out, 1)
-	if err != nil {
-		t.Fatalf("DebugPageStream: %v", err)
-	}
+	stream := pageStream(t, out, 1)
 	for _, want := range []string{"1 0 0 rg", "2 Tc", "90 Tz"} {
 		if !strings.Contains(stream, want) {
 			t.Errorf("%q was dropped from the block:\n%s", want, stream)
 		}
 	}
+}
+
+// pageStream returns a page's decoded content streams, concatenated. Tests use
+// it to assert on the bytes the editors actually wrote.
+func pageStream(t *testing.T, path string, pageNum int) string {
+	t.Helper()
+
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open %s: %v", path, err)
+	}
+	defer f.Close()
+
+	ctx, err := api.ReadValidateAndOptimize(f, model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	streams, _, err := pageContentStreamsWithRefs(ctx, pageNum)
+	if err != nil {
+		t.Fatalf("content streams: %v", err)
+	}
+
+	var b strings.Builder
+	for _, st := range streams {
+		b.Write(st)
+	}
+	return b.String()
 }
 
 // Editing two lines of the same block at once must apply both.

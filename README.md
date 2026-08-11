@@ -78,6 +78,20 @@ module implements and how citations in the source map to it.
 - `.github/workflows/build.yml` — packages Windows, macOS (universal binary),
   and Linux artifacts. Trigger it manually from the Actions tab.
 
+## Architecture notes
+
+**Documents are served, not shipped.** The viewer fetches the open PDF from the
+asset server (`backend/viewer/fileserver.go`) rather than receiving it as base64
+over the Wails bridge. The handler serves by opaque token, so filesystem paths
+stay out of URLs and only files the app explicitly granted can be read. Range
+requests are supported, so pdf.js renders the first page without waiting for the
+whole file.
+
+**Edits go to per-session working files.** Each operation writes a fresh file in
+a private `0700` directory, keeping a bounded window so undo has something to
+return to. The directory is removed on shutdown — without that, decrypted copies
+of protected documents would outlive the app.
+
 ## Not yet implemented
 
 These services are bound to the frontend but currently return "not yet
