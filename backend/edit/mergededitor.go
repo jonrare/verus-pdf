@@ -56,6 +56,14 @@ func (s *Service) EditMergedSpans(
 	if len(subSpans) == 0 {
 		return TextEditResult{Error: "no sub-spans provided"}
 	}
+	// Refuse rather than splice at offsets that do not address a page content
+	// stream — doing so overwrites unrelated bytes and corrupts the file.
+	for _, sp := range subSpans {
+		if sp.StreamIndex == notEditable {
+			return TextEditResult{Error: "this text cannot be edited in place: it lives in a Form XObject " +
+				"or spans two content streams, so its offsets do not address the page content stream"}
+		}
+	}
 
 	f, err := os.Open(inputPath)
 	if err != nil {
@@ -221,14 +229,18 @@ func (s *Service) EditMergedSpans(
 		}
 	}
 
-	// Apply edits
+	// Apply edits. A block that does not address a real stream is an error,
+	// not something to skip quietly — silently dropping it would report
+	// success while leaving the document unchanged.
 	for _, e := range edits {
 		if e.streamIdx < 0 || e.streamIdx >= len(streams) {
-			continue
+			return TextEditResult{Error: fmt.Sprintf(
+				"stream index %d out of range (page has %d content streams)", e.streamIdx, len(streams))}
 		}
 		stream := streams[e.streamIdx]
 		if e.blockStart < 0 || e.blockEnd > len(stream) || e.blockStart >= e.blockEnd {
-			continue
+			return TextEditResult{Error: fmt.Sprintf(
+				"block offsets [%d,%d] out of range for a %d-byte stream", e.blockStart, e.blockEnd, len(stream))}
 		}
 
 		modified := make([]byte, 0, len(stream)+len(e.newBlock))

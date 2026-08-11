@@ -69,8 +69,11 @@ function mergeSpansForDisplay(rawSpans) {
     const sameFont = cur.fontName === next.fontName
     const sameSize = Math.abs(cur.fontSize - next.fontSize) < 1.0
     const sameRot  = Math.abs((cur.rotation ?? 0) - (next.rotation ?? 0)) < 1.0
+    // Never merge an editable span with a non-editable one, or with a span from
+    // a different content stream — the result could not be spliced back.
+    const sameSource = cur.editable === next.editable && cur.streamIndex === next.streamIndex
 
-    const { adjacent, needsSpace } = (sameLine && sameFont && sameSize && sameRot)
+    const { adjacent, needsSpace } = (sameLine && sameFont && sameSize && sameRot && sameSource)
       ? spanGap(cur, next, run)
       : { adjacent: false }
 
@@ -458,6 +461,15 @@ export default function Viewer({ isEditMode = false }) {
 
     if (!hit) {
       setEditTarget(null)
+      return
+    }
+
+    // Text inside a Form XObject, or split across two content streams, has byte
+    // offsets that do not address the page content stream. The backend refuses
+    // these; say so here rather than opening an editor that cannot save.
+    if (hit.editable === false) {
+      setEditTarget(null)
+      setEditError('This text can’t be edited in place — it comes from an embedded object rather than the page itself.')
       return
     }
 

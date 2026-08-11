@@ -25,7 +25,6 @@ import (
 	"bytes"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"math"
 	"os"
 	"strconv"
@@ -33,7 +32,6 @@ import (
 	"unicode"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
-	pdfcpupkg "github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -49,10 +47,17 @@ type TextSpan struct {
 	FontSize float64 `json:"fontSize"` // effective size on the page (includes CTM scale)
 	PageNum  int     `json:"pageNum"`
 
-	// Stream location — needed for in-place editing
-	StreamIndex int `json:"streamIndex"`
-	OpStart     int `json:"opStart"` // byte offset of opening ( or <
-	OpEnd       int `json:"opEnd"`   // byte offset just past closing ) or >
+	// Stream location — needed for in-place editing.
+	//
+	// StreamIndex is an index into the page's /Contents array (0 for a single
+	// stream). It is notEditable (-1) when the offsets do not address a page
+	// content stream and so cannot be spliced: text inside a Form XObject,
+	// whose offsets belong to the XObject's own stream, and text in a BT/ET
+	// block split across two parts of a /Contents array.
+	StreamIndex int  `json:"streamIndex"`
+	OpStart     int  `json:"opStart"` // byte offset of opening ( or <
+	OpEnd       int  `json:"opEnd"`   // byte offset just past closing ) or >
+	Editable    bool `json:"editable"`
 
 	// BT/ET block boundaries — needed for block-level rewriting
 	BlockStart int     `json:"blockStart"` // byte offset of the BT operator
@@ -94,23 +99,27 @@ func ExtractText(filePath string, pageNum int) ([]TextSpan, error) {
 	// Load font resources for this page
 	fonts := loadPageFonts(ctx, pageNum)
 
-	// Get the content stream
-	r, err := pdfcpupkg.ExtractPageContent(ctx, pageNum)
+	// Read the page's content streams individually — NOT via
+	// pdfcpu.ExtractPageContent, which concatenates a /Contents array into one
+	// buffer. The editors splice into individual stream objects, so offsets
+	// measured against a concatenation would land in the wrong place on any
+	// page whose /Contents is an array (§7.8.2).
+	//
+	// A /Contents array is one logical stream split at token boundaries, so
+	// graphics and text state carry across the parts: one parser, parsed in
+	// order, each part tagged with its own index.
+	streams, _, err := pageContentStreamsWithRefs(ctx, pageNum)
 	if err != nil {
 		return nil, fmt.Errorf("extract content: %w", err)
 	}
-	if r == nil {
+	if len(streams) == 0 {
 		return nil, nil
 	}
 
-	stream, err := io.ReadAll(r)
-	if err != nil {
-		return nil, fmt.Errorf("read stream: %w", err)
-	}
-
-	// Parse with full CTM tracking
 	p := newStreamParser(ctx, fonts, pageNum)
-	p.parse(stream, 0)
+	for i, stream := range streams {
+		p.parse(stream, i)
+	}
 
 	// Filter empty/whitespace spans but do NOT merge.
 	// Merging is done client-side for display only.
@@ -162,9 +171,36 @@ type streamParser struct {
 
 	spans []TextSpan // accumulated text spans
 	depth int        // Form XObject recursion depth
+
+	// Stream identity. streamIdx is the index of the part currently being
+	// parsed; btStream is the part the open BT block started in. inXObject is
+	// set while recursing into a Form XObject, whose byte offsets belong to a
+	// different object entirely.
+	streamIdx int
+	btStream  int
+	inXObject bool
 }
 
 const maxFormXObjectDepth = 10 // prevent infinite recursion
+
+// notEditable marks a span whose byte offsets do not address a page content
+// stream, so it must never be spliced.
+const notEditable = -1
+
+// spanStream returns the stream index to record on a span emitted right now,
+// or notEditable if its offsets cannot be safely spliced.
+func (p *streamParser) spanStream() int {
+	if p.inXObject {
+		return notEditable
+	}
+	// A BT/ET block split across two parts of a /Contents array has its
+	// BlockStart in one part and its operands in another; neither the
+	// string-level nor the block-level editor can address that.
+	if p.inBT && p.btStream != p.streamIdx {
+		return notEditable
+	}
+	return p.streamIdx
+}
 
 func newStreamParser(ctx *model.Context, fonts pageFonts, pageNum int) *streamParser {
 	return &streamParser{
@@ -252,6 +288,7 @@ func (p *streamParser) glyphAdvance(hexRaw string, charCount int) float64 {
 // ── Parsing ───────────────────────────────────────────────────────────────────
 
 func (p *streamParser) parse(stream []byte, streamIdx int) {
+	p.streamIdx = streamIdx
 	tokens := tokenise(stream)
 
 	for i, tok := range tokens {
@@ -293,6 +330,7 @@ func (p *streamParser) parse(stream []byte, streamIdx int) {
 			p.ts.tm = Identity()
 			p.ts.tlm = Identity()
 			p.btStart = tok.start
+			p.btStream = streamIdx
 			p.blockTm = Identity()
 			p.blockSpanStart = len(p.spans)
 
@@ -466,7 +504,8 @@ func (p *streamParser) showString(tok token, streamIdx int) {
 		FontName:    p.gs.fontKey,
 		FontSize:    fsize,
 		PageNum:     p.pageNum,
-		StreamIndex: streamIdx,
+		StreamIndex: p.spanStream(),
+		Editable:    p.spanStream() != notEditable,
 		OpStart:     tok.start,
 		OpEnd:       tok.end,
 		// Block fields (BlockEnd filled in at ET)
@@ -546,7 +585,8 @@ func (p *streamParser) showTJArray(operands []token, streamIdx int) {
 			FontName:    p.gs.fontKey,
 			FontSize:    fsize,
 			PageNum:     p.pageNum,
-			StreamIndex: streamIdx,
+			StreamIndex: p.spanStream(),
+			Editable:    p.spanStream() != notEditable,
 			OpStart:     firstStart,
 			OpEnd:       lastEnd,
 			BlockStart:  p.btStart,
@@ -678,24 +718,37 @@ func (p *streamParser) handleFormXObject(name string) {
 		}
 	}
 
-	// Save graphics state, apply form matrix, parse recursively, restore
+	// Save graphics state, apply form matrix, parse recursively, restore.
+	//
+	// The stream identity is saved too: the form's content is a different
+	// object, so byte offsets recorded inside it do not address the page's
+	// content stream. inXObject makes every span emitted in there notEditable,
+	// and the caller's streamIdx has to be restored afterwards or the rest of
+	// the page would be attributed to the wrong stream.
 	savedGS := p.gs
 	savedTS := p.ts
 	savedBT := p.inBT
 	savedFonts := p.fonts
+	savedStreamIdx := p.streamIdx
+	savedBTStream := p.btStream
+	savedInXObject := p.inXObject
 
 	p.gs.ctm = formMatrix.Multiply(p.gs.ctm)
 	p.fonts = formFonts
 	p.inBT = false
+	p.inXObject = true
 	p.depth++
 
-	p.parse(xobjDict.Content, 0)
+	p.parse(xobjDict.Content, notEditable)
 
 	p.depth--
 	p.gs = savedGS
 	p.ts = savedTS
 	p.inBT = savedBT
 	p.fonts = savedFonts
+	p.streamIdx = savedStreamIdx
+	p.btStream = savedBTStream
+	p.inXObject = savedInXObject
 }
 
 func (p *streamParser) lookupXObject(name string) types.Object {

@@ -58,9 +58,32 @@ func TextPage(t *testing.T, name, contentStream string) string {
 // Pages builds a PDF with one page per content stream given.
 func Pages(t *testing.T, name string, contentStreams ...string) string {
 	t.Helper()
+	pages := make([][]string, len(contentStreams))
+	for i, cs := range contentStreams {
+		pages[i] = []string{cs}
+	}
+	return Document(t, name, pages...)
+}
 
-	if len(contentStreams) == 0 {
-		t.Fatal("pdftest.Pages: need at least one content stream")
+// SplitContentsPage builds a single-page PDF whose /Contents is an ARRAY of the
+// given streams.
+//
+// A /Contents array is one logical stream divided at token boundaries
+// (ISO 32000-1:2008, §7.8.2), and it is very common in real documents. It is
+// also where byte-offset bugs hide: offsets measured against a concatenation of
+// the parts do not address any individual part.
+func SplitContentsPage(t *testing.T, name string, streams ...string) string {
+	t.Helper()
+	return Document(t, name, streams)
+}
+
+// Document builds a PDF with one page per entry, each page carrying the given
+// content streams. A page with more than one stream gets a /Contents array.
+func Document(t *testing.T, name string, pages ...[]string) string {
+	t.Helper()
+
+	if len(pages) == 0 {
+		t.Fatal("pdftest.Document: need at least one page")
 	}
 
 	xref, err := pdfcpupkg.CreateXRefTableWithRootDict()
@@ -68,8 +91,72 @@ func Pages(t *testing.T, name string, contentStreams ...string) string {
 		t.Fatalf("CreateXRefTableWithRootDict: %v", err)
 	}
 
-	// Font descriptor — ISO 32000-1:2008, Table 122. Strict validation requires
-	// it even for a standard-14 face. Values are Helvetica's real metrics.
+	fontRef := helveticaFont(t, xref)
+
+	pagesRef, err := xref.IndRefForNewObject(types.Dict(map[string]types.Object{
+		"Type": types.Name("Pages"),
+	}))
+	if err != nil {
+		t.Fatalf("pages object: %v", err)
+	}
+
+	kids := make(types.Array, 0, len(pages))
+	for i, streams := range pages {
+		if len(streams) == 0 {
+			t.Fatalf("page %d has no content streams", i)
+		}
+
+		refs := make(types.Array, 0, len(streams))
+		for j, cs := range streams {
+			sd, err := xref.NewStreamDictForBuf([]byte(cs))
+			if err != nil {
+				t.Fatalf("page %d content stream %d: %v", i, j, err)
+			}
+			if err := sd.Encode(); err != nil {
+				t.Fatalf("page %d encode content stream %d: %v", i, j, err)
+			}
+			contentRef, err := xref.IndRefForNewObject(*sd)
+			if err != nil {
+				t.Fatalf("page %d content object %d: %v", i, j, err)
+			}
+			refs = append(refs, *contentRef)
+		}
+
+		// A single stream goes in directly; several become a /Contents array.
+		var contents types.Object = refs
+		if len(refs) == 1 {
+			contents = refs[0]
+		}
+
+		pageRef, err := xref.IndRefForNewObject(types.Dict(map[string]types.Object{
+			"Type":     types.Name("Page"),
+			"Parent":   *pagesRef,
+			"MediaBox": types.NewNumberArray(0, 0, 612, 792),
+			"Contents": contents,
+			"Resources": types.Dict(map[string]types.Object{
+				"Font": types.Dict(map[string]types.Object{"F1": *fontRef}),
+			}),
+		}))
+		if err != nil {
+			t.Fatalf("page object %d: %v", i, err)
+		}
+		kids = append(kids, *pageRef)
+	}
+
+	finalisePages(t, xref, pagesRef, kids)
+	return Write(t, xref, name)
+}
+
+// helveticaFont registers a spec-complete Helvetica Type1 font and returns its
+// indirect reference.
+//
+// The /Widths array and font descriptor are not optional dressing: without
+// them the document fails strict validation, and the decoder cannot resolve
+// glyph advances so every width falls back to an estimate.
+// ISO 32000-1:2008, §9.6.2.1 and Table 122.
+func helveticaFont(t *testing.T, xref *model.XRefTable) *types.IndirectRef {
+	t.Helper()
+
 	descRef, err := xref.IndRefForNewObject(types.Dict(map[string]types.Object{
 		"Type":        types.Name("FontDescriptor"),
 		"FontName":    types.Name("Helvetica"),
@@ -105,48 +192,13 @@ func Pages(t *testing.T, name string, contentStreams ...string) string {
 	if err != nil {
 		t.Fatalf("font object: %v", err)
 	}
+	return fontRef
+}
 
-	pagesRef, err := xref.IndRefForNewObject(types.Dict(map[string]types.Object{
-		"Type": types.Name("Pages"),
-	}))
-	if err != nil {
-		t.Fatalf("pages object: %v", err)
-	}
+// finalisePages fills in the page tree node and points the catalog at it.
+func finalisePages(t *testing.T, xref *model.XRefTable, pagesRef *types.IndirectRef, kids types.Array) {
+	t.Helper()
 
-	kids := make(types.Array, 0, len(contentStreams))
-	for i, cs := range contentStreams {
-		sd, err := xref.NewStreamDictForBuf([]byte(cs))
-		if err != nil {
-			t.Fatalf("content stream %d: %v", i, err)
-		}
-		if err := sd.Encode(); err != nil {
-			t.Fatalf("encode content stream %d: %v", i, err)
-		}
-		contentRef, err := xref.IndRefForNewObject(*sd)
-		if err != nil {
-			t.Fatalf("content object %d: %v", i, err)
-		}
-
-		pageRef, err := xref.IndRefForNewObject(types.Dict(map[string]types.Object{
-			"Type":     types.Name("Page"),
-			"Parent":   *pagesRef,
-			"MediaBox": types.NewNumberArray(0, 0, 612, 792),
-			"Contents": *contentRef,
-			"Resources": types.Dict(map[string]types.Object{
-				"Font": types.Dict(map[string]types.Object{"F1": *fontRef}),
-			}),
-		}))
-		if err != nil {
-			t.Fatalf("page object %d: %v", i, err)
-		}
-		kids = append(kids, *pageRef)
-	}
-
-	pagesDict := types.Dict(map[string]types.Object{
-		"Type":  types.Name("Pages"),
-		"Count": types.Integer(len(contentStreams)),
-		"Kids":  kids,
-	})
 	if err := xref.SetValid(*pagesRef); err != nil {
 		t.Fatalf("SetValid: %v", err)
 	}
@@ -154,15 +206,17 @@ func Pages(t *testing.T, name string, contentStreams ...string) string {
 	if !ok {
 		t.Fatal("pages xref entry missing")
 	}
-	entry.Object = pagesDict
+	entry.Object = types.Dict(map[string]types.Object{
+		"Type":  types.Name("Pages"),
+		"Count": types.Integer(len(kids)),
+		"Kids":  kids,
+	})
 
 	rootDict, err := xref.Catalog()
 	if err != nil {
 		t.Fatalf("catalog: %v", err)
 	}
 	rootDict["Pages"] = *pagesRef
-
-	return Write(t, xref, name)
 }
 
 // ReadFile is os.ReadFile with a t.Fatal on failure.
@@ -196,4 +250,79 @@ var HelveticaWidths = [...]int{
 	278, 556, 556, 222, 222, 500, 222, 833, 556, 556, // 102-111 f g h i j k l m n o
 	556, 556, 333, 500, 278, 556, 500, 722, 500, 500, // 112-121 p q r s t u v w x y
 	500, 334, 260, 334, 584, // 122-126  z { | } ~
+}
+
+// FormXObjectPage builds a single-page PDF whose content stream invokes a Form
+// XObject named /X1, whose own content stream is formContent.
+//
+// Text drawn inside a Form XObject lives in a different stream object, so its
+// byte offsets do not address the page's content stream — the case that makes
+// naive offset-based editing corrupt a document.
+// ISO 32000-1:2008, §8.10.1.
+func FormXObjectPage(t *testing.T, name, pageContent, formContent string) string {
+	t.Helper()
+
+	xref, err := pdfcpupkg.CreateXRefTableWithRootDict()
+	if err != nil {
+		t.Fatalf("CreateXRefTableWithRootDict: %v", err)
+	}
+
+	fontRef := helveticaFont(t, xref)
+	fontRes := types.Dict(map[string]types.Object{
+		"Font": types.Dict(map[string]types.Object{"F1": *fontRef}),
+	})
+
+	// The Form XObject: a stream dict with Subtype /Form, its own resources
+	// and a bounding box.
+	formSD, err := xref.NewStreamDictForBuf([]byte(formContent))
+	if err != nil {
+		t.Fatalf("form stream: %v", err)
+	}
+	formSD.Dict["Type"] = types.Name("XObject")
+	formSD.Dict["Subtype"] = types.Name("Form")
+	formSD.Dict["BBox"] = types.NewNumberArray(0, 0, 612, 792)
+	formSD.Dict["Resources"] = fontRes
+	if err := formSD.Encode(); err != nil {
+		t.Fatalf("encode form stream: %v", err)
+	}
+	formRef, err := xref.IndRefForNewObject(*formSD)
+	if err != nil {
+		t.Fatalf("form object: %v", err)
+	}
+
+	contentSD, err := xref.NewStreamDictForBuf([]byte(pageContent))
+	if err != nil {
+		t.Fatalf("content stream: %v", err)
+	}
+	if err := contentSD.Encode(); err != nil {
+		t.Fatalf("encode content stream: %v", err)
+	}
+	contentRef, err := xref.IndRefForNewObject(*contentSD)
+	if err != nil {
+		t.Fatalf("content object: %v", err)
+	}
+
+	pagesRef, err := xref.IndRefForNewObject(types.Dict(map[string]types.Object{
+		"Type": types.Name("Pages"),
+	}))
+	if err != nil {
+		t.Fatalf("pages object: %v", err)
+	}
+
+	pageRef, err := xref.IndRefForNewObject(types.Dict(map[string]types.Object{
+		"Type":     types.Name("Page"),
+		"Parent":   *pagesRef,
+		"MediaBox": types.NewNumberArray(0, 0, 612, 792),
+		"Contents": *contentRef,
+		"Resources": types.Dict(map[string]types.Object{
+			"Font":    types.Dict(map[string]types.Object{"F1": *fontRef}),
+			"XObject": types.Dict(map[string]types.Object{"X1": *formRef}),
+		}),
+	}))
+	if err != nil {
+		t.Fatalf("page object: %v", err)
+	}
+
+	finalisePages(t, xref, pagesRef, types.Array{*pageRef})
+	return Write(t, xref, name)
 }

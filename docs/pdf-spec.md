@@ -107,7 +107,6 @@ These are real gaps, not design choices — treat them as a work list.
 
 | Area | Deviation | Clause |
 |---|---|---|
-| Content streams | Byte offsets are computed against the *concatenation* of a page's `/Contents` array but applied to individual streams, so pages with multiple content streams splice at the wrong location. Spans found inside a Form XObject have the same problem: they carry offsets into the form's stream but are tagged `StreamIndex 0`. | §7.8.2 |
 | Block rewriting | `EditMergedSpans` replaces a whole `BT`…`ET` block with only the edited span's glyphs, discarding any other text in that block along with its `Tc`/`Tw`/`Tz`/`Tr` and colour operators. | §9.4 |
 | Graphics state | `q`/`Q` save and restore the font *name* but not the text state (`Tf` size, `Tc`, `Tw`, `TL`, `Tz`, `Ts`). The spec makes all of these part of the graphics state, so after a `Q` the font and its size can disagree. | §8.4.1 |
 | Text advance | `advanceTx` adds directly to `Tm.E`, ignoring the matrix's rotation and skew, and ignores `Tc`/`Tw`. Rotated or letter-spaced text drifts. | §9.4.4 |
@@ -128,6 +127,7 @@ Recorded so the tests that pin them are easy to find.
 | Literal strings | The tokeniser emitted a newline for a backslash-newline line continuation. `TestTokenise_LineContinuationEmitsNothing` | §7.3.4.2 |
 | Button fields | `/V` for checkbox and radio fields was written as a string, leaving widgets rendering as off. `TestFieldValue_ButtonsGetNameObjects` | §12.7.4.2 |
 | Text strings | Hex-literal field values were returned as raw hex, so UTF-16BE values surfaced as `FEFF…`. | §7.9.2.2 |
+| Stream addressing | Byte offsets were measured against the *concatenation* of a page's `/Contents` array (via `pdfcpu.ExtractPageContent`) but applied to individual stream objects, so any page with a `/Contents` array spliced at the wrong location. Spans inside a Form XObject were worse: offsets into the form's own stream, tagged `StreamIndex 0`. Extraction now reads the parts individually and tags each span with its real stream; anything that cannot be addressed is marked `notEditable` and both editors refuse it. `TestExtractText_SplitContentsReportsPerStreamOffsets`, `TestReplaceSpanText_EditsCorrectStreamOfSplitContents`, `TestExtractText_FormXObjectSpansAreNotEditable` | §7.8.2, §8.10.1 |
 
 ### The standard-14 metrics gap
 

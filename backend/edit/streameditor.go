@@ -63,6 +63,10 @@ func (s *Service) ReplaceSpanText(
 	if err != nil {
 		return TextEditResult{Error: "content streams: " + err.Error()}
 	}
+	if streamIndex == notEditable {
+		return TextEditResult{Error: "this text cannot be edited in place: it lives in a Form XObject " +
+			"or spans two content streams, so its offsets do not address the page content stream"}
+	}
 	if streamIndex < 0 || streamIndex >= len(streams) {
 		return TextEditResult{Error: fmt.Sprintf("stream index %d out of range", streamIndex)}
 	}
