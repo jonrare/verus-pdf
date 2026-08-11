@@ -45,7 +45,6 @@ func (s *Service) AddTextStamp(inputPath, outputPath, text, descriptor, pageSele
 	if err != nil {
 		return Result{Error: fmt.Sprintf("invalid page selection: %v", err)}
 	}
-	// v0.7: AddTextWatermarksFile(inFile, outFile, selectedPages, onTop bool, text, desc string, conf)
 	if err := api.AddTextWatermarksFile(inputPath, outputPath, pages, true, text, descriptor, conf); err != nil {
 		return Result{Error: fmt.Sprintf("add stamp failed: %v", err)}
 	}
@@ -96,7 +95,7 @@ func (s *Service) AddPageNumbers(inputPath, outputPath, descriptor string) Resul
 // AddWatermarkText adds a diagonal "DRAFT" / "CONFIDENTIAL" style watermark.
 func (s *Service) AddWatermarkText(inputPath, outputPath, text string) Result {
 	conf := model.NewDefaultConfiguration()
-	descriptor := fmt.Sprintf("font:Helvetica, points:48, color:#CCCCCC, rotation:45, opacity:0.3, position:c, scale:1.0 rel")
+	const descriptor = "font:Helvetica, points:48, color:#CCCCCC, rotation:45, opacity:0.3, position:c, scale:1.0 rel"
 	if err := api.AddTextWatermarksFile(inputPath, outputPath, nil, false, text, descriptor, conf); err != nil {
 		return Result{Error: fmt.Sprintf("add watermark failed: %v", err)}
 	}

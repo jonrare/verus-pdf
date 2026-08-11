@@ -37,7 +37,8 @@ func (s *Service) Encrypt(inputPath, outputPath, ownerPassword, userPassword str
 	conf.OwnerPW = ownerPassword
 	conf.UserPW = userPassword
 
-	// pdfcpu v0.7 uses raw int16 bitmask for permissions — no named constants
+	// pdfcpu takes a raw bitmask for permissions — no named constants.
+	// Bit meanings: ISO 32000-1:2008, Table 22 (user access permissions).
 	switch permissions {
 	case PermissionsAll:
 		conf.Permissions = model.PermissionFlags(0xFFFF)

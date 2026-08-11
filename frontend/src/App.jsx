@@ -34,8 +34,8 @@ export default function App() {
     const handler = async (e) => {
       const mod = e.ctrlKey || e.metaKey
 
-      // Ctrl+Z — undo
-      if (mod && e.key === 'z' && !e.shiftKey) {
+      // Ctrl+Z — undo (e.key is uppercase under Shift or Caps Lock)
+      if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) {
         e.preventDefault()
         const snapshot = undo()
         if (!snapshot) return
@@ -45,8 +45,9 @@ export default function App() {
         return
       }
 
-      // Ctrl+S — save (overwrite original); Ctrl+Shift+S — save as
-      if (mod && e.key === 's') {
+      // Ctrl+S — save (overwrite original); Ctrl+Shift+S — save as.
+      // e.key is uppercase when Shift is held, so compare case-insensitively.
+      if (mod && e.key.toLowerCase() === 's') {
         e.preventDefault()
         const { document: doc, setDocument: sd, finishOperation, failOperation } = useAppStore.getState()
         if (!doc) return

@@ -1,7 +1,10 @@
 // Package ocr provides OCR services for scanned PDFs.
-// Requires go-fitz (MuPDF) + gosseract (Tesseract) — both CGO packages.
-// These stubs compile without any CGO dependencies.
-// See README for installation instructions to enable full OCR.
+//
+// NOT IMPLEMENTED. Every method here is a stub that returns an error. A real
+// implementation needs go-fitz (MuPDF) for page rasterisation and gosseract
+// (Tesseract) for recognition — both CGO packages, which is why they are not
+// wired up yet: adding them makes the build require a C toolchain and native
+// libraries on all three target platforms.
 package ocr
 
 import "fmt"
@@ -27,9 +30,9 @@ func (s *Service) IsInstalled() bool {
 }
 
 func (s *Service) OCRDocument(inputPath, outputPath string, lang string) OCRResult {
-	return OCRResult{Error: fmt.Sprintf("OCR not available: install go-fitz + gosseract (see README). Input: %s", inputPath)}
+	return OCRResult{Error: fmt.Sprintf("OCR not available: requires go-fitz + gosseract, which are not built in. Input: %s", inputPath)}
 }
 
 func (s *Service) OCRPage(inputPath string, pageNumber int) ([]byte, string) {
-	return nil, fmt.Sprintf("OCR not available: install go-fitz + gosseract (see README)")
+	return nil, fmt.Sprintf("OCR not available: requires go-fitz + gosseract, which are not built in")
 }

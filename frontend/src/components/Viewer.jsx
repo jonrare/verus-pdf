@@ -10,45 +10,78 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
 
 const DRAG_THRESHOLD = 4
 
+// Span-merge tuning, in ems of the current span's font size.
+// Keep in sync with backend/edit/contentstream.go — the two implementations
+// must agree or the overlay boxes will not match what the editor rewrites.
+const SAME_LINE_EM       = 0.4
+const SPACE_GAP_EM       = 0.15
+const MAX_GAP_EM         = 2.0
+const ASSUMED_GLYPH_EM   = 0.62
+const SPACE_ADVANCE_RATIO = 1.35
+
+// Decide whether `next` continues `cur` on the same line, and whether a space
+// belongs between them. Mutates `run` with the advance it observed.
+//
+// When cur.width is known the gap is measured from the true end of the span.
+// When it is not, fall back to the origin-to-origin advance of the previous
+// glyph run, compared against the widest advance seen so far in this run.
+function spanGap(cur, next, run) {
+  const size = cur.fontSize > 0 ? cur.fontSize : 12
+
+  if (cur.width && cur.width > 0) {
+    const gap = next.x - (cur.x + cur.width)
+    if (gap <= -size * 0.5 || gap >= size * MAX_GAP_EM) return { adjacent: false }
+    return { adjacent: true, needsSpace: gap > size * SPACE_GAP_EM }
+  }
+
+  let advance = next.x - run.prevX
+  if (run.prevChars > 1) advance /= run.prevChars
+  if (advance <= -size * 0.5 || advance >= size * (1 + MAX_GAP_EM)) return { adjacent: false }
+
+  const threshold = Math.max(size * ASSUMED_GLYPH_EM, run.maxAdv * SPACE_ADVANCE_RATIO)
+  const needsSpace = advance > threshold
+  // Only glyph advances (not word gaps) inform the baseline.
+  if (!needsSpace && advance > run.maxAdv) run.maxAdv = advance
+  return { adjacent: true, needsSpace }
+}
+
 // Merge raw spans into display-only spans for overlay boxes.
 // This does NOT change opStart/opEnd — merged spans are never sent to the editor.
 function mergeSpansForDisplay(rawSpans) {
   if (!rawSpans || rawSpans.length === 0) return []
 
+  const newRun = (s) => ({ prevX: s.x, prevChars: s.text?.length ?? 0, maxAdv: 0 })
+
   const merged = []
   let cur = { ...rawSpans[0], subSpans: [rawSpans[0]] }
+  let run = newRun(cur)
 
   for (let i = 1; i < rawSpans.length; i++) {
     const next = rawSpans[i]
 
-    const sameLine = Math.abs(cur.y - next.y) < cur.fontSize * 0.4
+    const sameLine = Math.abs(cur.y - next.y) < cur.fontSize * SAME_LINE_EM
     const sameFont = cur.fontName === next.fontName
     const sameSize = Math.abs(cur.fontSize - next.fontSize) < 1.0
     const sameRot  = Math.abs((cur.rotation ?? 0) - (next.rotation ?? 0)) < 1.0
 
-    const curEndX = (cur.width && cur.width > 0)
-      ? cur.x + cur.width
-      : cur.x + (cur.text?.length ?? 0) * cur.fontSize * 0.5
-    const gap = next.x - curEndX
-    const maxGap = cur.fontSize * 2.0
-    const minGap = -cur.fontSize * 0.5
-    const closeEnough = gap < maxGap && gap > minGap
-    const wideRange = sameLine && next.x > cur.x && (next.x - cur.x) < cur.fontSize * 40
+    const { adjacent, needsSpace } = (sameLine && sameFont && sameSize && sameRot)
+      ? spanGap(cur, next, run)
+      : { adjacent: false }
 
-    if (sameFont && sameSize && sameRot && sameLine && (closeEnough || wideRange)) {
-      const needsSpace = gap > cur.fontSize * 0.15
-      cur.text = needsSpace ? cur.text + ' ' + next.text : cur.text + next.text
-      cur.subSpans.push(next)
-      if (next.width && next.width > 0) {
-        cur.width = (next.x + next.width) - cur.x
-      } else if (cur.width > 0) {
-        const nextEndX = next.x + (next.text?.length ?? 0) * next.fontSize * 0.5
-        cur.width = nextEndX - cur.x
-      }
-    } else {
+    if (!adjacent) {
       merged.push(cur)
       cur = { ...next, subSpans: [next] }
+      run = newRun(next)
+      continue
     }
+
+    cur.text = needsSpace ? cur.text + ' ' + next.text : cur.text + next.text
+    cur.subSpans.push(next)
+    // Only widen from a real measurement — never fabricate a width, or the
+    // error compounds across the run.
+    if (next.width && next.width > 0) cur.width = (next.x + next.width) - cur.x
+    run.prevX = next.x
+    run.prevChars = next.text?.length ?? 0
   }
   merged.push(cur)
   return merged

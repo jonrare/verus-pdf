@@ -812,8 +812,49 @@ func filterSpans(spans []TextSpan) []TextSpan {
 	return out
 }
 
+// Span-merge tuning, all expressed in ems of the current span's font size.
+const (
+	// Vertical tolerance for "same baseline".
+	sameLineEm = 0.4
+	// Gap beyond the end of a known-width span that reads as a word space.
+	// A word space is ~0.25 em in the common text faces; half of that is a
+	// safe floor.
+	spaceGapEm = 0.15
+	// Gaps wider than this are column or cell breaks, not word breaks.
+	maxGapEm = 2.0
+	// Fallback per-glyph advance assumed before the run has any history.
+	// Sits between typical lowercase (~0.55 em) and uppercase (~0.68 em).
+	assumedGlyphEm = 0.62
+	// How much wider than the run's widest glyph an advance must be before it
+	// is read as containing a space.
+	spaceAdvanceRatio = 1.35
+)
+
+// runState tracks what the current merged run has already seen, so the
+// unknown-width path can compare a new advance against real evidence from this
+// font rather than a fixed guess.
+type runState struct {
+	prevX     float64 // origin of the span most recently folded in
+	prevRunes int     // its rune count
+	maxAdv    float64 // widest per-glyph advance observed in this run
+}
+
+func newRunState(s TextSpan) runState {
+	return runState{prevX: s.X, prevRunes: len([]rune(s.Text))}
+}
+
 // mergeAdjacentSpans combines spans on the same line that are close together.
 // This turns per-character spans into readable word/sentence spans.
+//
+// Two regimes, depending on whether the decoder resolved glyph widths:
+//
+//   - Width is known: measure the gap from the true end of the span. Simple and
+//     accurate.
+//   - Width is unknown: fall back to the origin-to-origin advance of the
+//     previous glyph run, compared against the widest advance seen so far in
+//     this run. This is inherently lossy — a narrow glyph followed by a space
+//     can advance less than a wide glyph alone — so it errs toward keeping
+//     words intact rather than shattering them.
 func mergeAdjacentSpans(spans []TextSpan) []TextSpan {
 	if len(spans) == 0 {
 		return nil
@@ -821,71 +862,86 @@ func mergeAdjacentSpans(spans []TextSpan) []TextSpan {
 
 	var merged []TextSpan
 	current := spans[0]
+	run := newRunState(current)
 
 	for i := 1; i < len(spans); i++ {
 		next := spans[i]
 
-		sameLine := math.Abs(current.Y-next.Y) < current.FontSize*0.4
+		sameLine := math.Abs(current.Y-next.Y) < current.FontSize*sameLineEm
 		sameFont := current.FontName == next.FontName
 		sameSize := math.Abs(current.FontSize-next.FontSize) < 1.0
 		sameRot := math.Abs(current.Rotation-next.Rotation) < 1.0
 
-		// Calculate where the current span visually ends
-		var currentEndX float64
-		if current.Width > 0 {
-			currentEndX = current.X + current.Width
-		} else {
-			// Fallback estimate
-			currentEndX = current.X + float64(len([]rune(current.Text)))*current.FontSize*0.5
+		needsSpace, adjacent := false, false
+		if sameLine && sameFont && sameSize && sameRot {
+			needsSpace, adjacent = spanGap(current, next, &run)
 		}
 
-		gap := next.X - currentEndX
-
-		// A typical space character is roughly 0.25× font size.
-		// We consider a gap to be "close enough to merge" if it's less than
-		// about 3 character widths. We insert a space if the gap is larger
-		// than ~0.15× font size (roughly half a space width — conservative
-		// to avoid missing spaces).
-		spaceThreshold := current.FontSize * 0.15
-		maxGap := current.FontSize * 2.0
-		minGap := -current.FontSize * 0.5 // allow slight overlap
-
-		closeEnough := gap < maxGap && gap > minGap
-
-		// Also allow merging for same-line rightward spans within a
-		// reasonable range (handles cases where width estimation is off)
-		wideLineRange := sameLine && next.X > current.X && (next.X-current.X) < current.FontSize*40
-
-		canMerge := sameFont && sameSize && sameRot && sameLine && (closeEnough || wideLineRange)
-
-		if canMerge {
-			needsSpace := gap > spaceThreshold
-
-			if needsSpace {
-				current.Text += " " + next.Text
-			} else {
-				current.Text += next.Text
-			}
-			// Extend the byte range
-			if next.OpEnd > current.OpEnd {
-				current.OpEnd = next.OpEnd
-			}
-			// Update width to cover from current.X to the end of next span
-			if next.Width > 0 {
-				current.Width = (next.X + next.Width) - current.X
-			} else if current.Width > 0 {
-				// At minimum extend to the start of next span + its estimated width
-				nextEndX := next.X + float64(len([]rune(next.Text)))*next.FontSize*0.5
-				current.Width = nextEndX - current.X
-			}
-		} else {
+		if !adjacent {
 			merged = append(merged, current)
 			current = next
+			run = newRunState(next)
+			continue
 		}
+
+		if needsSpace {
+			current.Text += " " + next.Text
+		} else {
+			current.Text += next.Text
+		}
+		// Extend the byte range
+		if next.OpEnd > current.OpEnd {
+			current.OpEnd = next.OpEnd
+		}
+		// Only widen from a real measurement — never fabricate a width, or the
+		// error compounds across the run.
+		if next.Width > 0 {
+			current.Width = (next.X + next.Width) - current.X
+		}
+		run.prevX = next.X
+		run.prevRunes = len([]rune(next.Text))
 	}
 	merged = append(merged, current)
 
 	return merged
+}
+
+// spanGap reports whether next continues current on the same line, and whether
+// a space belongs between them. It updates run with the advance it observed.
+func spanGap(current, next TextSpan, run *runState) (needsSpace, adjacent bool) {
+	size := current.FontSize
+	if size <= 0 {
+		size = 12
+	}
+
+	if current.Width > 0 {
+		gap := next.X - (current.X + current.Width)
+		if gap <= -size*0.5 || gap >= size*maxGapEm {
+			return false, false
+		}
+		return gap > size*spaceGapEm, true
+	}
+
+	// Unknown width — measure what the previous glyph run actually consumed.
+	advance := next.X - run.prevX
+	if run.prevRunes > 1 {
+		advance /= float64(run.prevRunes)
+	}
+	if advance <= -size*0.5 || advance >= size*(1+maxGapEm) {
+		return false, false
+	}
+
+	threshold := size * assumedGlyphEm
+	if run.maxAdv*spaceAdvanceRatio > threshold {
+		threshold = run.maxAdv * spaceAdvanceRatio
+	}
+	needsSpace = advance > threshold
+
+	// Only glyph advances (not word gaps) inform the baseline.
+	if !needsSpace && advance > run.maxAdv {
+		run.maxAdv = advance
+	}
+	return needsSpace, true
 }
 
 // ── Tokeniser ─────────────────────────────────────────────────────────────────

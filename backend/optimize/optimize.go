@@ -29,7 +29,7 @@ func (s *Service) Optimize(inputPath, outputPath string) OptimizeResult {
 	origSize := origInfo.Size()
 
 	conf := model.NewDefaultConfiguration()
-	// v0.7: optimization settings live directly on the conf
+	// Object and cross-reference streams — ISO 32000-1:2008, §7.5.7 and §7.5.8.
 	conf.WriteObjectStream = true
 	conf.WriteXRefStream = true
 

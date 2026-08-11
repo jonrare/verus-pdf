@@ -186,12 +186,6 @@ export async function ExtractImages(inputPath, outputDir) {
   return window.go.convert.Service.ExtractImages(inputPath, outputDir)
 }
 
-// WordToPDF(inputPath, outputDir string) Result
-export async function WordToPDF(inputPath, outputDir) {
-  await ready(() => window.go?.convert?.Service?.WordToPDF)
-  return window.go.convert.Service.WordToPDF(inputPath, outputDir)
-}
-
 // ── Optimize ──────────────────────────────────────────────────────────────────
 // Optimize(inputPath, outputPath string) OptimizeResult
 export async function Optimize(inputPath, outputPath) {

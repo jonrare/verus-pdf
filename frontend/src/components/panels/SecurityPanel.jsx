@@ -30,7 +30,7 @@ const inputStyle = { width: '100%', background: 'var(--bg-base)', border: '1px s
 
 export default function SecurityPanel() {
   const { document, startOperation, finishOperation, failOperation } = useAppStore()
-  const { docPath } = useOperation()
+  const { run, docPath } = useOperation()
 
   const [encStatus, setEncStatus] = useState({ encrypted: false, hasUserPW: false })
   const [ownerPw,   setOwnerPw]   = useState('')

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
@@ -78,8 +79,8 @@ func (s *Service) ListBookmarks(filePath string) ([]Bookmark, error) {
 
 // AddBookmark appends a new top-level bookmark for the given page, preserving existing ones.
 type AddBookmarkResult struct {
-	Error    string `json:"error,omitempty"`
-	Debug    string `json:"debug,omitempty"`
+	Error string `json:"error,omitempty"`
+	Debug string `json:"debug,omitempty"`
 }
 
 func (s *Service) AddBookmark(inputPath, outputPath, title string, page int) AddBookmarkResult {
@@ -107,7 +108,9 @@ func (s *Service) AddBookmark(inputPath, outputPath, title string, page int) Add
 	cleaned := sanitizeBookmarks(existing)
 	cleaned = append(cleaned, pdfcpu.Bookmark{Title: title, PageFrom: page})
 
-	debug := fmt.Sprintf("in=%s out=%s title=%q page=%d existing=%d", inputPath, outputPath, title, page, len(existing))
+	// Base names only — the full paths reach the UI and end up in error strings.
+	debug := fmt.Sprintf("in=%s out=%s page=%d existing=%d",
+		filepath.Base(inputPath), filepath.Base(outputPath), page, len(existing))
 
 	if err := api.AddBookmarksFile(inputPath, outputPath, cleaned, true, conf); err != nil {
 		return AddBookmarkResult{Error: fmt.Sprintf("add bookmark: %v | %s", err, debug)}
