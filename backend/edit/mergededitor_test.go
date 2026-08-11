@@ -289,7 +289,12 @@ func TestGlyphWidthForRune_CIDUsesGlyphTable(t *testing.T) {
 
 func TestBuildBTBlock_Structure(t *testing.T) {
 	fi := &fontInfo{widths: map[uint16]int{'A': 500, 'B': 500}, defaultWidth: 500}
-	block := string(buildBTBlock("F1", 12, 1, 0, 0, 1, 72, 700, []rune("AB"), fi))
+	runs := []positionedRun{{
+		fontName: "F1", tfSize: 12,
+		tm:    Matrix{A: 1, D: 1, E: 72, F: 700},
+		chars: []rune("AB"),
+	}}
+	block := string(buildBTBlock([]byte("BT\n"), runs, pageFonts{"F1": fi}))
 
 	for _, want := range []string{"BT\n", "/F1 12.0 Tf\n", "1.0 0.0 0.0 1.0 72.0 700.0 Tm\n", "ET\n"} {
 		if !strings.Contains(block, want) {
@@ -306,8 +311,20 @@ func TestBuildBTBlock_Structure(t *testing.T) {
 	}
 }
 
+// The prologue is copied verbatim so state the block set before drawing —
+// colour, Tc, Tz, the render mode — is not lost.
+func TestBuildBTBlock_CopiesPrologueVerbatim(t *testing.T) {
+	prologue := []byte("BT\n/F1 12 Tf\n1 0 0 rg\n3 Tc\n")
+	runs := []positionedRun{{fontName: "F1", tfSize: 12, tm: Identity(), chars: []rune("A")}}
+
+	block := string(buildBTBlock(prologue, runs, nil))
+	if !strings.HasPrefix(block, string(prologue)) {
+		t.Errorf("prologue was not preserved:\n%s", block)
+	}
+}
+
 func TestBuildBTBlock_EmptyTextStillWellFormed(t *testing.T) {
-	block := string(buildBTBlock("F1", 12, 1, 0, 0, 1, 0, 0, nil, nil))
+	block := string(buildBTBlock([]byte("BT\n"), nil, nil))
 	if !strings.HasPrefix(block, "BT\n") || !strings.HasSuffix(block, "ET\n") {
 		t.Errorf("block is not bracketed by BT/ET:\n%s", block)
 	}
@@ -319,7 +336,12 @@ func TestBuildBTBlock_EmptyTextStillWellFormed(t *testing.T) {
 // A rewritten block has to survive a round trip through the decoder.
 func TestBuildBTBlock_IsReparseable(t *testing.T) {
 	fi := &fontInfo{encoding: &winAnsiEncoding, widths: map[uint16]int{}, defaultWidth: 500}
-	block := buildBTBlock("F1", 12, 1, 0, 0, 1, 72, 700, []rune("Hi"), fi)
+	runs := []positionedRun{{
+		fontName: "F1", tfSize: 12,
+		tm:    Matrix{A: 1, D: 1, E: 72, F: 700},
+		chars: []rune("Hi"),
+	}}
+	block := buildBTBlock([]byte("BT\n"), runs, pageFonts{"F1": fi})
 
 	p := newStreamParser(nil, pageFonts{"F1": fi}, 1)
 	p.parse(block, 0)

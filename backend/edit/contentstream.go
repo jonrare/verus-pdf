@@ -63,12 +63,17 @@ type TextSpan struct {
 	BlockStart int     `json:"blockStart"` // byte offset of the BT operator
 	BlockEnd   int     `json:"blockEnd"`   // byte offset just past ET
 	TfSize     float64 `json:"tfSize"`     // raw Tf font size (before CTM scaling)
-	TmA        float64 `json:"tmA"`        // text matrix at block start [a b c d e f]
-	TmB        float64 `json:"tmB"`
-	TmC        float64 `json:"tmC"`
-	TmD        float64 `json:"tmD"`
-	TmE        float64 `json:"tmE"`
-	TmF        float64 `json:"tmF"`
+
+	// Text matrix [a b c d e f] at the moment this span was shown — not the
+	// block's first Tm. Positioning inside a block is commonly done with Td
+	// rather than Tm, so the block's Tm says nothing about where later runs
+	// sit, and rebuilding from it drops everything back to the block origin.
+	TmA float64 `json:"tmA"`
+	TmB float64 `json:"tmB"`
+	TmC float64 `json:"tmC"`
+	TmD float64 `json:"tmD"`
+	TmE float64 `json:"tmE"`
+	TmF float64 `json:"tmF"`
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -173,9 +178,8 @@ type streamParser struct {
 	inBT    bool            // inside BT...ET block
 
 	// Block tracking for BT/ET rewriting
-	btStart        int    // byte offset of current BT
-	blockTm        Matrix // the Tm set in the current BT block
-	blockSpanStart int    // index into p.spans where current block starts
+	btStart        int // byte offset of current BT
+	blockSpanStart int // index into p.spans where current block starts
 
 	spans []TextSpan // accumulated text spans
 	depth int        // Form XObject recursion depth
@@ -376,7 +380,6 @@ func (p *streamParser) parse(stream []byte, streamIdx int) {
 			p.ts.tlm = Identity()
 			p.btStart = tok.start
 			p.btStream = streamIdx
-			p.blockTm = Identity()
 			p.blockSpanStart = len(p.spans)
 
 		case "ET":
@@ -441,10 +444,6 @@ func (p *streamParser) parse(stream []byte, streamIdx int) {
 				f := parseFloat(operands[len(operands)-1].value)
 				p.ts.tm = Matrix{A: a, B: b, C: c, D: d, E: e, F: f}
 				p.ts.tlm = p.ts.tm
-				// Record the first Tm in this BT block for reconstruction
-				if p.inBT && len(p.spans) == p.blockSpanStart {
-					p.blockTm = p.ts.tm
-				}
 			}
 
 		case "Td":
@@ -523,6 +522,7 @@ func (p *streamParser) showString(tok token, streamIdx int) {
 	px, py := p.textOrigin()
 	rot := p.textRotation()
 	fsize := p.effectiveSize()
+	startTm := p.ts.tm
 
 	p.advanceText(p.glyphAdvance(hexRaw, text))
 
@@ -548,9 +548,9 @@ func (p *streamParser) showString(tok token, streamIdx int) {
 		// Block fields (BlockEnd filled in at ET)
 		BlockStart: p.btStart,
 		TfSize:     p.gs.tfSize,
-		TmA:        p.blockTm.A, TmB: p.blockTm.B,
-		TmC: p.blockTm.C, TmD: p.blockTm.D,
-		TmE: p.blockTm.E, TmF: p.blockTm.F,
+		TmA:        startTm.A, TmB: startTm.B,
+		TmC: startTm.C, TmD: startTm.D,
+		TmE: startTm.E, TmF: startTm.F,
 	})
 }
 
@@ -562,6 +562,7 @@ func (p *streamParser) showTJArray(operands []token, streamIdx int) {
 	px, py := p.textOrigin()
 	rot := p.textRotation()
 	fsize := p.effectiveSize()
+	startTm := p.ts.tm
 
 	for _, op := range operands {
 		switch op.kind {
@@ -607,9 +608,9 @@ func (p *streamParser) showTJArray(operands []token, streamIdx int) {
 			OpEnd:       lastEnd,
 			BlockStart:  p.btStart,
 			TfSize:      p.gs.tfSize,
-			TmA:         p.blockTm.A, TmB: p.blockTm.B,
-			TmC: p.blockTm.C, TmD: p.blockTm.D,
-			TmE: p.blockTm.E, TmF: p.blockTm.F,
+			TmA:         startTm.A, TmB: startTm.B,
+			TmC: startTm.C, TmD: startTm.D,
+			TmE: startTm.E, TmF: startTm.F,
 		})
 	}
 }

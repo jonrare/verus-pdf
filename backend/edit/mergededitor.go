@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"sort"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -42,6 +43,29 @@ type SubSpanInfo struct {
 	TmD         float64 `json:"tmD"`
 	TmE         float64 `json:"tmE"`
 	TmF         float64 `json:"tmF"`
+}
+
+// blockKey identifies one BT/ET block within a page's content streams.
+type blockKey struct {
+	streamIdx  int
+	blockStart int
+	blockEnd   int
+}
+
+// blockEdit is a rebuilt block ready to splice over the original bytes.
+type blockEdit struct {
+	streamIdx  int
+	blockStart int
+	blockEnd   int
+	newBlock   []byte
+}
+
+// positionedRun is one run of characters drawn at a known text-space position.
+type positionedRun struct {
+	fontName string
+	tfSize   float64
+	tm       Matrix
+	chars    []rune
 }
 
 // EditMergedSpans applies edits from a merged display span by rewriting
@@ -159,90 +183,90 @@ func (s *Service) EditMergedSpans(
 		}
 	}
 
-	// Group sub-spans by BT/ET block (identified by streamIndex + blockStart)
-	type blockKey struct {
-		streamIdx  int
-		blockStart int
-		blockEnd   int
-	}
-	type blockInfo struct {
-		key                          blockKey
-		fontName                     string
-		tfSize                       float64
-		tmA, tmB, tmC, tmD, tmE, tmF float64
-		chars                        []rune // all characters for this block after editing
+	// Re-parse the page. The caller only names the spans it wants changed, but
+	// a BT/ET block usually holds more than that — other lines, other runs —
+	// and rebuilding the block from the caller's spans alone would delete them.
+	// Reading the block's real contents here is what makes the rewrite safe.
+	parser := newStreamParser(ctx, fonts, pageNum)
+	for i, st := range streams {
+		parser.parse(st, i)
 	}
 
-	blockMap := make(map[blockKey]*blockInfo)
-	var blockOrder []blockKey // preserve order
-
+	// Index the edited text by the span it replaces.
+	type spanKey struct{ streamIdx, opStart int }
+	editedChars := make(map[spanKey][]rune, len(subSpans))
+	touched := make(map[blockKey]bool)
 	for i, sp := range subSpans {
+		editedChars[spanKey{sp.StreamIndex, sp.OpStart}] = spanChars[i]
+		touched[blockKey{sp.StreamIndex, sp.BlockStart, sp.BlockEnd}] = true
+	}
+
+	// Group every span on the page by the block it belongs to, in stream order.
+	blocks := make(map[blockKey][]TextSpan)
+	var blockOrder []blockKey
+	for _, sp := range parser.spans {
 		bk := blockKey{sp.StreamIndex, sp.BlockStart, sp.BlockEnd}
-		bi, exists := blockMap[bk]
-		if !exists {
-			bi = &blockInfo{
-				key:      bk,
-				fontName: sp.FontName,
-				tfSize:   sp.TfSize,
-				tmA:      sp.TmA, tmB: sp.TmB,
-				tmC: sp.TmC, tmD: sp.TmD,
-				tmE: sp.TmE, tmF: sp.TmF,
-			}
-			blockMap[bk] = bi
+		if !touched[bk] {
+			continue
+		}
+		if _, seen := blocks[bk]; !seen {
 			blockOrder = append(blockOrder, bk)
 		}
-		bi.chars = append(bi.chars, spanChars[i]...)
+		blocks[bk] = append(blocks[bk], sp)
+	}
+	if len(blockOrder) == 0 {
+		return TextEditResult{Error: "the text to edit was not found on this page — reopen the document and try again"}
 	}
 
-	// Build replacement BT/ET blocks and apply to streams.
-	// Process in reverse byte order so earlier replacements don't shift later offsets.
-	type blockEdit struct {
-		streamIdx  int
-		blockStart int
-		blockEnd   int
-		newBlock   []byte
-	}
+	// Build replacement blocks, then apply them in reverse byte order so an
+	// earlier splice does not shift the offsets of a later one.
 	var edits []blockEdit
-
 	for _, bk := range blockOrder {
-		bi := blockMap[bk]
-		fi := fonts[bi.fontName]
+		if bk.streamIdx < 0 || bk.streamIdx >= len(streams) {
+			return TextEditResult{Error: fmt.Sprintf(
+				"stream index %d out of range (page has %d content streams)", bk.streamIdx, len(streams))}
+		}
+		stream := streams[bk.streamIdx]
+		if bk.blockStart < 0 || bk.blockEnd > len(stream) || bk.blockStart >= bk.blockEnd {
+			return TextEditResult{Error: fmt.Sprintf(
+				"block offsets [%d,%d] out of range for a %d-byte stream", bk.blockStart, bk.blockEnd, len(stream))}
+		}
 
-		newBlock := buildBTBlock(bi.fontName, bi.tfSize,
-			bi.tmA, bi.tmB, bi.tmC, bi.tmD, bi.tmE, bi.tmF,
-			bi.chars, fi)
+		spans := blocks[bk]
+		runs := make([]positionedRun, 0, len(spans))
+		for _, sp := range spans {
+			chars, edited := editedChars[spanKey{sp.StreamIndex, sp.OpStart}]
+			if !edited {
+				chars = []rune(sp.Text)
+			}
+			if len(chars) == 0 {
+				continue // the whole run was deleted
+			}
+			runs = append(runs, positionedRun{
+				fontName: sp.FontName,
+				tfSize:   sp.TfSize,
+				tm:       Matrix{A: sp.TmA, B: sp.TmB, C: sp.TmC, D: sp.TmD, E: sp.TmE, F: sp.TmF},
+				chars:    chars,
+			})
+		}
+
+		// Everything between BT and the first text operand — Tf, Tc, Tz, Tr,
+		// colour, the initial Tm — is copied verbatim so the block keeps
+		// drawing the way it did.
+		prologue := stream[bk.blockStart:spans[0].OpStart]
 
 		edits = append(edits, blockEdit{
 			streamIdx:  bk.streamIdx,
 			blockStart: bk.blockStart,
 			blockEnd:   bk.blockEnd,
-			newBlock:   newBlock,
+			newBlock:   buildBTBlock(prologue, runs, fonts),
 		})
 	}
 
-	// Sort edits by blockStart descending (reverse order for safe splicing)
-	for i := 1; i < len(edits); i++ {
-		j := i
-		for j > 0 && edits[j].blockStart > edits[j-1].blockStart {
-			edits[j], edits[j-1] = edits[j-1], edits[j]
-			j--
-		}
-	}
+	sort.Slice(edits, func(i, j int) bool { return edits[i].blockStart > edits[j].blockStart })
 
-	// Apply edits. A block that does not address a real stream is an error,
-	// not something to skip quietly — silently dropping it would report
-	// success while leaving the document unchanged.
 	for _, e := range edits {
-		if e.streamIdx < 0 || e.streamIdx >= len(streams) {
-			return TextEditResult{Error: fmt.Sprintf(
-				"stream index %d out of range (page has %d content streams)", e.streamIdx, len(streams))}
-		}
 		stream := streams[e.streamIdx]
-		if e.blockStart < 0 || e.blockEnd > len(stream) || e.blockStart >= e.blockEnd {
-			return TextEditResult{Error: fmt.Sprintf(
-				"block offsets [%d,%d] out of range for a %d-byte stream", e.blockStart, e.blockEnd, len(stream))}
-		}
-
 		modified := make([]byte, 0, len(stream)+len(e.newBlock))
 		modified = append(modified, stream[:e.blockStart]...)
 		modified = append(modified, e.newBlock...)
@@ -275,42 +299,47 @@ func (s *Service) EditMergedSpans(
 	}
 }
 
-// buildBTBlock constructs a complete BT...ET content stream block.
+// buildBTBlock reassembles a BT...ET block from its runs.
 //
-// Output format:
+// The prologue — everything from BT up to the first text operand in the
+// original block — is copied verbatim, so state the block set before drawing
+// (font, Tc, Tw, Tz, Tr, colour, the initial Tm) survives the rewrite. Each run
+// then gets an explicit Tm at its recorded position followed by its glyphs,
+// with each glyph offset from the previous one by that glyph's advance.
 //
-//	BT
-//	/FontKey TfSize Tf
-//	tmA tmB tmC tmD tmE tmF Tm
-//	<glyph0> Tj
-//	width0 0 Td <glyph1> Tj
-//	width1 0 Td <glyph2> Tj
-//	...
+// Output shape:
+//
+//	BT /F1 12 Tf 1 0 0 rg 1 0 0 1 72 700 Tm     <- prologue, verbatim
+//	1 0 0 1 72 700 Tm <48> Tj 6.0 0 Td <69> Tj  <- run
+//	1 0 0 1 72 680 Tm <54> Tj ...               <- next run
 //	ET
-func buildBTBlock(fontName string, tfSize float64,
-	tmA, tmB, tmC, tmD, tmE, tmF float64,
-	chars []rune, fi *fontInfo,
-) []byte {
+//
+// Operators set *between* runs are not preserved; a colour change partway
+// through a block is lost. See docs/pdf-spec.md.
+func buildBTBlock(prologue []byte, runs []positionedRun, fonts pageFonts) []byte {
 	var buf bytes.Buffer
 
-	buf.WriteString("BT\n")
-	buf.WriteString(fmt.Sprintf("/%s %s Tf\n", fontName, formatFloat(tfSize)))
-	buf.WriteString(fmt.Sprintf("%s %s %s %s %s %s Tm\n",
-		formatFloat(tmA), formatFloat(tmB),
-		formatFloat(tmC), formatFloat(tmD),
-		formatFloat(tmE), formatFloat(tmF)))
+	buf.Write(prologue)
+	if n := len(prologue); n > 0 && !isWS(prologue[n-1]) {
+		buf.WriteByte('\n')
+	}
 
-	for i, r := range chars {
-		hexGlyph := encodeRuneToHex(r, fi)
+	for _, run := range runs {
+		fi := fonts[run.fontName]
 
-		if i == 0 {
-			// First character: just Tj at the Tm position
-			buf.WriteString(fmt.Sprintf("<%s> Tj\n", hexGlyph))
-		} else {
-			// Subsequent characters: advance by previous character's width
-			prevWidth := glyphWidthForRune(chars[i-1], fi, tfSize)
-			buf.WriteString(fmt.Sprintf("%s 0 Td <%s> Tj\n",
-				formatFloat(prevWidth), hexGlyph))
+		if run.fontName != "" {
+			fmt.Fprintf(&buf, "/%s %s Tf\n", run.fontName, formatFloat(run.tfSize))
+		}
+		fmt.Fprintf(&buf, "%s %s %s %s %s %s Tm\n",
+			formatFloat(run.tm.A), formatFloat(run.tm.B),
+			formatFloat(run.tm.C), formatFloat(run.tm.D),
+			formatFloat(run.tm.E), formatFloat(run.tm.F))
+
+		for i, r := range run.chars {
+			if i > 0 {
+				fmt.Fprintf(&buf, "%s 0 Td ", formatFloat(glyphWidthForRune(run.chars[i-1], fi, run.tfSize)))
+			}
+			fmt.Fprintf(&buf, "<%s> Tj\n", encodeRuneToHex(r, fi))
 		}
 	}
 
